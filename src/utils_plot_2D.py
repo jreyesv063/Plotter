@@ -145,42 +145,38 @@ def plot_2d_hist(
     title="",
     logz=False,
     save_path=None,
-    year = "2018",
+    year="2018",
     show_binning=False,
     show_bin_values=True,
     bin_value_fmt=".1f",
     bin_value_size=8
 ):
     """
-    Plotea un histograma 2D con estilo CMS para presentaciones.
-    Ahora acepta bins_x y bins_y como listas o arrays NumPy.
-
-    Returns:
-        extended_bins_x, extended_bins_y: bordes de bin incluyendo under/overflow.
+    Plotea un histograma 2D con estilo CMS, mostrando valores consistentes con get_binning_table
+    y devolviendo los bins extendidos que incluyen underflow/overflow
     """
     plt.style.use(hep.style.CMS)
     
-    # Convertir bins a arrays NumPy si son listas (SOLUCIÓN AL ERROR)
     bins_x = np.asarray(bins_x)
     bins_y = np.asarray(bins_y)
 
     fig, ax = plt.subplots(figsize=(8, 7))
 
-    # Calcular bin widths
-    dx = bins_x[1] - bins_x[0]
-    dy = bins_y[1] - bins_y[0]
+    # Calcular bin widths para extensión
+    dx = bins_x[1] - bins_x[0] if len(bins_x) > 1 else 0
+    dy = bins_y[1] - bins_y[0] if len(bins_y) > 1 else 0
 
-    # Expandir binning para underflow/overflow (solo para cálculo)
-    extended_bins_x = np.concatenate([[bins_x[0] - dx], bins_x, [bins_x[-1] + dx]])
-    extended_bins_y = np.concatenate([[bins_y[0] - dy], bins_y, [bins_y[-1] + dy]])
+    # Crear bins extendidos (igual que en get_binning_table)
+    extended_bins_x = np.concatenate([[bins_x[0] - dx], bins_x, [bins_x[-1] + dx]]) if dx > 0 else bins_x
+    extended_bins_y = np.concatenate([[bins_y[0] - dy], bins_y, [bins_y[-1] + dy]]) if dy > 0 else bins_y
 
     if show_binning:
-        print(f"X bins (+ under/overflow): {extended_bins_x}")
-        print(f"Y bins (+ under/overflow): {extended_bins_y}")
+        print(f"Extended X bins: {extended_bins_x}")
+        print(f"Extended Y bins: {extended_bins_y}")
 
     X, Y = np.meshgrid(extended_bins_x, extended_bins_y)
 
-    # Dibujar histograma
+    # Dibujar histograma con bins extendidos
     mesh = ax.pcolormesh(
         X, Y, hist2d.T,
         cmap='viridis',
@@ -188,44 +184,61 @@ def plot_2d_hist(
         norm=LogNorm() if logz else None
     )
 
-    # Establecer límites y marcas de los ejes
+    # Establecer límites a los bins regulares
     ax.set_xlim(bins_x[0], bins_x[-1])
     ax.set_ylim(bins_y[0], bins_y[-1])
     
-    # Forzar que los ticks mayores coincidan con los bordes de los bins
     ax.set_xticks(bins_x)
     ax.set_yticks(bins_y)
     
-    # Formato para evitar decimales cuando no son necesarios
     ax.xaxis.set_major_formatter(plt.FormatStrFormatter('%g'))
     ax.yaxis.set_major_formatter(plt.FormatStrFormatter('%g'))
 
-    # Añadir valores en los bins si está activado
+    # Añadir valores en los bins (coherente con get_binning_table)
     if show_bin_values:
-        # Calcular posiciones centrales de los bins (sin under/overflow)
+        # Prepara el histograma visible (sumando underflow/overflow)
+        hist_visible = hist2d.copy()
+        nx = len(bins_x) - 1
+        ny = len(bins_y) - 1
+        
+        if hist2d.shape[0] > nx and hist2d.shape[1] > ny:  # Si hay underflow/overflow
+            # Sumar underflow/overflow (misma lógica que get_binning_table)
+            hist_visible[1, 1:-1] += hist_visible[0, 1:-1]  # Underflow X
+            hist_visible[nx, 1:-1] += hist_visible[nx+1, 1:-1]  # Overflow X
+            hist_visible[1:-1, 1] += hist_visible[1:-1, 0]  # Underflow Y
+            hist_visible[1:-1, ny] += hist_visible[1:-1, ny+1]  # Overflow Y
+            # Esquinas
+            hist_visible[1, 1] += hist_visible[0, 0]
+            hist_visible[nx, ny] += hist_visible[nx+1, ny+1]
+            hist_visible[1, ny] += hist_visible[0, ny+1]
+            hist_visible[nx, 1] += hist_visible[nx+1, 0]
+
+        # Centros de bins regulares
         bin_centers_x = (bins_x[:-1] + bins_x[1:]) / 2
         bin_centers_y = (bins_y[:-1] + bins_y[1:]) / 2
-        
-        # Iterar sobre los bins visibles (excluyendo underflow/overflow)
-        for i in range(len(bin_centers_x)):
-            for j in range(len(bin_centers_y)):
-                value = hist2d[i+1, j+1]  # +1 para saltar underflow
+
+        # Mostrar valores (solo para bins regulares)
+        for i in range(nx):
+            for j in range(ny):
+                value = hist_visible[i+1, j+1] if (hist2d.shape[0] > nx and hist2d.shape[1] > ny) else hist_visible[i, j]
                 if value == 0:
                     continue
+                    
+                x_pos = bin_centers_x[i]
+                y_pos = bin_centers_y[j]
                 
-                # Determinar color automáticamente según brillo del fondo
                 rgba = mesh.cmap(mesh.norm(value))
                 brightness = rgba[0]*0.299 + rgba[1]*0.587 + rgba[2]*0.114
                 text_color = 'white' if brightness < 0.5 else 'black'
                 
                 ax.text(
-                    bin_centers_x[i], bin_centers_y[j], 
-                    f"{value:{bin_value_fmt}}", 
+                    x_pos, y_pos,
+                    f"{value:{bin_value_fmt}}",
                     ha='center', va='center',
                     color=text_color, fontsize=bin_value_size,
                     bbox=dict(
                         boxstyle='round,pad=0.2',
-                        facecolor=(*rgba[:3], 0.7),  # Fondo semitransparente
+                        facecolor=(*rgba[:3], 0.7),
                         edgecolor='none',
                         alpha=0.7
                     )
@@ -235,12 +248,10 @@ def plot_2d_hist(
     hep.cms.lumitext(lumi_text, fontsize=14, ax=ax)
     hep.cms.text("Preliminary", loc=0.0, fontsize=16, ax=ax)
     
-    # Colorbar
     cb = fig.colorbar(mesh, ax=ax, pad=0.02)
     cb.set_label("Events", fontsize=11)
     cb.ax.tick_params(labelsize=10)
 
-    # Etiquetas
     ax.set_xlabel(xlabel, fontsize=12)
     ax.set_ylabel(ylabel, fontsize=12)
 
@@ -256,7 +267,7 @@ def plot_2d_hist(
 
     plt.show()
 
-    return extended_bins_x, extended_bins_y
+    return extended_bins_x, extended_bins_y  # Devuelve los bins extendidos
 
 
 
