@@ -1,0 +1,31 @@
+# Ignorar todas las carpetas
+/*/
+
+# Exceptuar jsons/ y src/
+!jsons/
+!src/
+
+# Ignorar caché de Python
+__pycache__/
+
+# Ignorar checkpoints de notebooks
+.ipynb_checkpoints/
+
+# Ignorar archivos de sistema comunes
+*.DS_Store
+
+# Ignorar archivos de Jupyter de pruebas temporales
+*.v#.Test_bgr.ipynb/
+
+# Archivos temporales de sistema de versiones
+**/.sys.v#.*
+
+# Notebooks de prueba (si no quieres versionarlos)
+Test_*.ipynb
+
+
+# --------------------------------------
+# Ignorar archivos temporales en jsons/
+# --------------------------------------
+jsons/.sys.v#.*/
+
