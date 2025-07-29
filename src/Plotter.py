@@ -513,11 +513,17 @@ class Plotter:
             return df_with_errors, scaled_error_df
 
     def get_table_report(self):
+        from collections import defaultdict
+        import pandas as pd
+        import numpy as np
+    
         qcd_estimated = None
+        qcd_estimated_error = None
     
         if self.applied_data_driven:
             valor_str = self.qcd['QCD Estimated'].iloc[-1]
             qcd_estimated = float(valor_str.split('±')[0].strip())
+            qcd_estimated_error = float(valor_str.split('±')[1].strip())
     
         report_map = {}
     
@@ -552,21 +558,26 @@ class Plotter:
                 (i for i, idx in enumerate(df_report.index) if str(idx).startswith("Data")),
                 len(df_report)
             )
+            formatted_qcd = f"{qcd_estimated:.2f} ± {qcd_estimated_error:.2f}"
             df_report = pd.concat([
                 df_report.iloc[:insert_position],
-                pd.DataFrame({"Events": [qcd_estimated]}, index=[qcd_row_name]),
+                pd.DataFrame({"Events": [formatted_qcd]}, index=[qcd_row_name]),
                 df_report.iloc[insert_position:]
             ])
     
         # Fila Total (suma de todos los fondos)
         bkg_mask = ~df_report.index.str.startswith("Data") & (df_report.index != "Data/Total bgr")
-        total = df_report.loc[bkg_mask, "Events"].sum()
+        total = df_report.loc[bkg_mask, "Events"].apply(
+            lambda x: float(str(x).split('±')[0].strip()) if isinstance(x, str) else x
+        ).sum()
         df_report.loc["Total bgr"] = total
     
         # Fila Data/Total
         data_rows = df_report.index[df_report.index.str.startswith("Data")]
         if len(data_rows) > 0:
-            data_total = df_report.loc[data_rows, "Events"].sum()
+            data_total = df_report.loc[data_rows, "Events"].apply(
+                lambda x: float(str(x).split('±')[0].strip()) if isinstance(x, str) else x
+            ).sum()
             ratio = data_total / total if total > 0 else float("nan")
             df_report.loc["Data/Total bgr"] = ratio
         else:
@@ -578,7 +589,9 @@ class Plotter:
             if idx in ["Total bgr", "Data/Total bgr"] or str(idx).startswith("Data"):
                 contribution.append(float("nan"))
             else:
-                contrib = 100 * df_report.loc[idx, "Events"] / total if total > 0 else float("nan")
+                contrib_val = df_report.loc[idx, "Events"]
+                contrib_val = float(str(contrib_val).split('±')[0].strip()) if isinstance(contrib_val, str) else contrib_val
+                contrib = 100 * contrib_val / total if total > 0 else float("nan")
                 contribution.append(contrib)
     
         df_report["Contribution (%)"] = contribution
@@ -594,14 +607,73 @@ class Plotter:
         df_bkg_sorted = df_report.loc[bkg_rows].sort_values("Contribution (%)", ascending=False)
         df_rest = df_report.loc[non_bkg_rows]
     
-        # Concatenar: fondos ordenados + resto sin tocar
         df_report = pd.concat([df_bkg_sorted, df_rest])
     
-        # Redondear
-        df_report = df_report.round(2)
+        # === Cargar errores desde tabla de cutflow ===
+        if self.applied_data_driven:
+            cutflow_table, _, _ = self.get_table_cutflow(variation="cutflow", combined_samples=True)
+        else:
+            cutflow_table, _ = self.get_table_cutflow(variation="cutflow", combined_samples=True)
+    
+        last_cut = cutflow_table.iloc[-1]
+    
+        # === Añadir errores a la columna 'Events' como strings con '±' ===
+        event_strings = []
+        errors_for_total = []
+        for idx in df_report.index:
+            event_val = df_report.loc[idx, "Events"]
+    
+            # Si ya está formateado con ±
+            if isinstance(event_val, str) and '±' in event_val:
+                event_strings.append(event_val)
+                err = float(event_val.split('±')[1].strip())
+                if idx != "Data/Total bgr":
+                    errors_for_total.append(err)
+                else:
+                    errors_for_total.append(0.0)
+                continue
+    
+            # Si es QCD (Data-driven) y no tenía formato aún
+            if idx == "QCD (Data-driven)" and qcd_estimated is not None:
+                formatted = f"{qcd_estimated:.2f} ± {qcd_estimated_error:.2f}"
+                event_strings.append(formatted)
+                errors_for_total.append(qcd_estimated_error)
+                continue
+    
+            val_err_str = last_cut.get(idx)
+            if isinstance(val_err_str, str) and '±' in val_err_str:
+                val_part, err_part = val_err_str.split('±')
+                val_num = float(val_part.strip())
+                err_val = float(err_part.strip())
+                event_strings.append(f"{val_num:.2f} ± {err_val:.2f}")
+                errors_for_total.append(err_val)
+            else:
+                val_num = float(event_val)
+                event_strings.append(f"{val_num:.2f}")
+                errors_for_total.append(0.0)
+    
+        df_report["Events"] = event_strings
+    
+        # Sumar errores en cuadratura para 'Total bgr'
+        total_bkg_val = df_report.loc["Total bgr", "Events"]
+        if isinstance(total_bkg_val, str) and '±' in total_bkg_val:
+            total_bkg_val = float(total_bkg_val.split('±')[0].strip())
+        else:
+            total_bkg_val = float(total_bkg_val)
+    
+        total_bkg_error = (np.array(errors_for_total) ** 2).sum() ** 0.5
+        df_report.loc["Total bgr", "Events"] = f"{total_bkg_val:.2f} ± {total_bkg_error:.2f}"
+    
+        # Redondear Contribution
+        df_report["Contribution (%)"] = df_report["Contribution (%)"].round(2)
+    
+        # Renombrar la columna para reflejar que incluye incertidumbre
+        df_report.rename(columns={"Events": "Events ± stat"}, inplace=True)
         df_report.columns.name = "Samples"
     
         return df_report
+
+
     
         
     # -----------------------------------

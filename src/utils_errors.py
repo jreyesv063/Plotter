@@ -5,12 +5,12 @@ from scipy.stats import beta
 from scipy.stats import poisson
 
 
+
 def calc_bayes_eff_error(numerator: float, denominator: float) -> float:
     """
     Compute Bayesian efficiency uncertainty using ROOT's TGraphAsymmErrors::BayesDivide.
     This exactly replicates the ROOT behavior.
     """
-    
     if denominator == 0:
         return 0.0
 
@@ -60,9 +60,7 @@ def calc_bin_eff_error(numerator: float, denominator: float) -> float:
 
 
 def get_table_cutflow_unscaled(json_map, table = "cutflow"):
-    
     pd.set_option('display.float_format', '{:.2f}'.format)
-
 
     cutflow_unscaled = {}
 
@@ -72,10 +70,10 @@ def get_table_cutflow_unscaled(json_map, table = "cutflow"):
             list(json_map[ds][table].keys()) for ds in json_map if table in json_map[ds]
         )
     except StopIteration:
-        raise ValueError("❌ Ningún dataset contiene la clave 'cutflow'")
+        raise ValueError(f"❌ Ningún dataset contiene la clave {table}")
 
     for dataset in json_map:
-        cutflow_nominal = json_map[dataset].get("cutflow", {})
+        cutflow_nominal = json_map[dataset].get(table, {})
         unscaled = {}
         for cut in base_cuts:
             value = cutflow_nominal.get(cut)
@@ -154,46 +152,17 @@ def compute_eff_cutflow(cutflow_table, normalization):
 
 def compute_statistical_error(numerator: float, denominator: float) -> float:
     """
-    Compute the statistical uncertainty, using Bayesian errors for edge cases.
-    Returns 0.0 if denominator = 0 or if numerator = denominator = 0.
+    Compute the statistical uncertainty using standard binomial error,
+    but switch to Bayesian error if efficiency is too close to 0 or 1.
     """
     if denominator <= 0:
-        return 0.0  # No hay datos, error cero
-
-    if numerator == 0:
-        # Caso: numerator = 0, denominator > 0
-        # Usamos Bayes con un pseudo-count (prior Beta(1,1)) para evitar error cero
-        return calc_bayes_eff_error(1.0, denominator + 2.0)  # +2 por prior uniforme
+        return 0.0
 
     efficiency = numerator / denominator
     eff_err = calc_bin_eff_error(numerator, denominator)
 
-    # Si el error binomial es físicamente inválido (eficiencia >1 o <0), usamos Bayes
-    if (efficiency + eff_err > 1.0) or (efficiency - eff_err < 0.0):
-        return calc_bayes_eff_error(numerator, denominator)
-
-    return eff_err
-
-
-
-def compute_statistical_error(numerator: float, denominator: float) -> float:
-    """
-    Compute the statistical uncertainty, using Bayesian errors for edge cases.
-    Returns 0.0 if denominator = 0 or if numerator = denominator = 0.
-    """
-    if denominator <= 0:
-        return 0.0  # No hay datos, error cero
-
-    if numerator == 0:
-        # Caso: numerator = 0, denominator > 0
-        # Usamos Bayes con un pseudo-count (prior Beta(1,1)) para evitar error cero
-        return calc_bayes_eff_error(1.0, denominator + 2.0)  # +2 por prior uniforme
-
-    efficiency = numerator / denominator
-    eff_err = calc_bin_eff_error(numerator, denominator)
-
-    # Si el error binomial es físicamente inválido (eficiencia >1 o <0), usamos Bayes
-    if (efficiency + eff_err > 1.0) or (efficiency - eff_err < 0.0):
-        return calc_bayes_eff_error(numerator, denominator)
+    # Usar Bayes si eficiencia es cercana a 0 o 1
+    if efficiency < 0.00001 or efficiency > 0.99999:
+        eff_err = calc_bayes_eff_error(numerator, denominator)
 
     return eff_err
