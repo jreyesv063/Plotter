@@ -3,6 +3,8 @@ import math
 import json
 import numpy as np
 import pandas as pd
+import mplhep as hep
+import matplotlib.pyplot as plt
 from collections import defaultdict
 
 # Local libraries
@@ -34,8 +36,6 @@ class Plotter:
         # Merge samples
         merge_samples: bool = True,
 
-        # Distirbution
-        distribution_with_obj_level_var: str = "lepton_met_mass",
         
         # Efficiency and stadistical error
         systematic_error: bool = False,
@@ -67,8 +67,8 @@ class Plotter:
         self.lepton_flavor = lepton_flavor
         self.combined_2016 = combined_2016
         self.control_region = control_region
+    
 
-        self.distribution_with_obj_level_var = distribution_with_obj_level_var
         
         self.stadistical_error_using = stadistical_error_using
 
@@ -88,6 +88,9 @@ class Plotter:
         self.qcd_shape = qcd_shape
         self.qcd_ratio = qcd_ratio
         self.qcd_ratio_integrated = qcd_ratio_integrated
+
+    
+
 
         # ------------------------------------------------
         #                  Step 1  
@@ -301,6 +304,13 @@ class Plotter:
         # ------------------------------------------------
         self.grouped_samples = group_samples(self.json_map.keys())
 
+
+        # -------------------------------------------------
+        #  Plot QCD squema
+        # -------------------------------------------------
+        if self.applied_data_driven:
+            QCD_squema_plot(self.control_region, self.qcd_shape)
+            
     
     def get_table_cutflow(self, variation, combined_samples=False):
 
@@ -788,7 +798,7 @@ class Plotter:
         
             self.grouped_histos['qcd'] = qcd_hist
             
-        hist_plotter = HistogramPlotter(year=self.year, lepton_flavor = self.lepton_flavor, combined_2016 = self.combined_2016, is_signal = self.signal)
+        hist_plotter = HistogramPlotter(year=self.year, lepton_flavor = self.lepton_flavor, combined_2016 = self.combined_2016, is_signal = self.signal, output_dir = self.output_folder)
      
 
         
@@ -941,8 +951,8 @@ class Plotter:
     # -----------------------------------
     #        Root files
     # -----------------------------------
-    def get_root_files(self, CR_name:str, with_plots: bool):
-        event_table, percentages  = load_systematic_variations(self.pkl_map, self.normalization, self.distribution, self.binning_hist, with_plots, self.year, self.lepton_flavor, CR_name, self.root_files_folder)
+    def get_root_files(self, CR_name:str, with_plots: bool, distribution: str, binning):
+        event_table, percentages  = load_systematic_variations(self.pkl_map, self.normalization,  distribution, binning, with_plots, self.year, self.lepton_flavor, CR_name, self.root_files_folder)
 
         
         return event_table, percentages
@@ -958,9 +968,9 @@ class Plotter:
 
 
     # ------------------------------------
-    #   QCD estimation
+    #   QCD estimation: comparison
     # ------------------------------------
-    def qcd_estimation(self, cr_x: str):
+    def qcd_estimation_hist(self, cr_x: str, distribution, binning, overflow, underflow):
 
         cr_x_map = {
             "cr_b":  os.path.join(self.cr_B_folder, "summary", "pkl"),
@@ -970,19 +980,136 @@ class Plotter:
         
         qcd_shape = get_qcd_estimation_shape(
                 pkls = load_all_pickles(cr_x_map[cr_x]), 
-                bins=self.binning_hist,
-                distribution=self.distribution,
-                consider_overflow=self.overflow,
-                consider_underflow=self.underflow,
+                bins= binning,
+                distribution=distribution,
+                consider_overflow=overflow,
+                consider_underflow=underflow,
                 normalization_factors=self.normalization
         )
 
         return qcd_shape
 
     
+
+
+    def qcd_comparison(
+        self,
+        distribution: str,
+        binning: np.ndarray,
+        overflow: bool = True,
+        underflow: bool = True,
+        normalize: bool = False,
+        log_scale: bool = True,
+        y_range: tuple = None,
+    ):
+        """
+        Grafica estimaciones QCD en CR_B, CR_C, CR_D y devuelve la tabla correspondiente.
+    
+        Parámetros:
+        - distribution: nombre de la variable a graficar (ej. "mt_tau_met")
+        - binning: array con los bordes de los bins
+        - overflow, underflow: bool, si se consideran over/underflows en la estimación
+        - normalize: bool, si True normaliza las distribuciones a unidad
+        - log_scale: bool, si True usa escala logarítmica en el eje Y
+        - y_range: tuple (min, max) para el eje Y
+    
+        Retorna:
+        - pd.DataFrame con los valores por bin y total
+        """
+        plt.style.use(hep.style.CMS)
+    
+        bins = np.array(binning)
+    
+        # Obtener histogramas
+        qcd_map = {
+            "CR_B": np.array(self.qcd_estimation_hist("cr_b", distribution, binning, overflow, underflow)),
+            "CR_C": np.array(self.qcd_estimation_hist("cr_c", distribution, binning, overflow, underflow)),
+            "CR_D": np.array(self.qcd_estimation_hist("cr_d", distribution, binning, overflow, underflow)),
+        }
+    
+        # Normalizar si se solicita
+        if normalize:
+            for key in qcd_map:
+                total = np.sum(qcd_map[key])
+                qcd_map[key] = qcd_map[key] / total if total > 0 else qcd_map[key]
+    
+        # Colores
+        colors = {
+            "CR_B": "#1f77b4",
+            "CR_C": "#2ca02c",
+            "CR_D": "#d62728",
+        }
+    
+        # Gráfico
+        fig, ax = plt.subplots(figsize=(8, 6))
+    
+        for region in ["CR_B", "CR_C", "CR_D"]:
+            values = qcd_map[region]
+            ax.step(
+                bins,
+                np.append(values, values[-1]),
+                where="post",
+                color=colors[region],
+                linewidth=2,
+                label=fr"QCD {region.replace('_', '$_')}$"
+            )
+    
+        ax.set_xlabel(r"$m_T(\tau, p_T^{miss})$ [GeV]", fontsize=14)
+        ax.set_ylabel("Events / GeV" if not normalize else "A.U.", fontsize=14)
+    
+        if log_scale:
+            ax.set_yscale("log")
+    
+        if y_range is not None:
+            ax.set_ylim(*y_range)
+        else:
+            if log_scale:
+                ax.set_ylim(1e-1 if normalize else 1, 2 if normalize else 2e4)
+    
+        ax.set_xlim(bins[0], bins[-1])
+    
+        hep.cms.text("Preliminary", loc=0, fontsize=16)
+        hep.cms.lumitext(self.lumi_map[self.year], fontsize=12)
+    
+        ax.legend(
+            loc="upper center",
+            bbox_to_anchor=(0.5, 0.97),
+            ncol=3,
+            fontsize=12,
+            frameon=False
+        )
+    
+        plt.tight_layout()
+        plt.savefig(f"{self.output_folder}/qcd_comparison_{self.year}.pdf", format="pdf", bbox_inches="tight")
+        plt.show()
+    
+        # Tabla
+        bin_labels = [f"{bins[i]:.1f}–{bins[i+1]:.1f}" for i in range(len(bins) - 1)]
+    
+        df_qcd = pd.DataFrame({
+            "Bin": bin_labels,
+            "CR_B": qcd_map["CR_B"],
+            "CR_C": qcd_map["CR_C"],
+            "CR_D": qcd_map["CR_D"],
+        })
+    
+        if normalize:
+            total_row = {"Bin": "Total", "CR_B": 1.0, "CR_C": 1.0, "CR_D": 1.0}
+        else:
+            total_row = {
+                "Bin": "Total",
+                "CR_B": np.sum(self.qcd_estimation_hist("cr_b", distribution, binning, overflow, underflow)),
+                "CR_C": np.sum(self.qcd_estimation_hist("cr_c", distribution, binning, overflow, underflow)),
+                "CR_D": np.sum(self.qcd_estimation_hist("cr_d", distribution, binning, overflow, underflow)),
+            }
+    
+        df_qcd = pd.concat([df_qcd, pd.DataFrame([total_row])], ignore_index=True)
+    
+        return df_qcd
+
+        
+
     def get_maps(self):
         return self.pkl_map, self.json_map , self.normalization, self.sumw
-
-
         
         

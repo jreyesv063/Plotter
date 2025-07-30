@@ -84,7 +84,7 @@ def get_table_cutflow_unscaled(json_map, table = "cutflow"):
                 except (ValueError, TypeError):
                     unscaled[cut] = None
             else:
-                print(f"⚠️  Campo '{cut}' no encontrado en dataset '{dataset}'")
+                #print(f"⚠️  Campo '{cut}' no encontrado en dataset '{dataset}'")
                 unscaled[cut] = None
 
         cutflow_unscaled[dataset] = unscaled

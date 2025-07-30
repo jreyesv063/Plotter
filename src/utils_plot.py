@@ -81,7 +81,7 @@ def get_hist(
     
     
 class HistogramPlotter:
-    def __init__(self, year: str, lepton_flavor: str = "mu", combined_2016: bool = False, is_signal: bool = False):
+    def __init__(self, year: str, lepton_flavor: str = "mu", combined_2016: bool = False, is_signal: bool = False, output_dir: str = "plot"):
         """
         Initialize a histogram plotter for HEP data visualization.
         
@@ -90,6 +90,7 @@ class HistogramPlotter:
             lepton_flavor (str): Lepton channel ("mu", "ele", "tau")
             combined_2016 (bool): Whether to use combined 2016 data
         """
+        self.output_dir = output_dir
         self.year = year
         self.lepton_flavor = lepton_flavor
         self.combined_2016 = combined_2016
@@ -151,7 +152,6 @@ class HistogramPlotter:
                 "met_raw":  r"$p_T^{miss}(raw)$ [GeV]",
                 "met_phi": r"$\phi(p_T^{miss})$",
                 "lepton_pt": r"$p_T(\mu)$ [GeV]",
-                "lepton_relIso": "$\mu$ RelIso",
                 "lepton_eta": r"$\eta(\mu)$",
                 "lepton_phi": r"$\phi (\mu)$",
                 "lepton_bjet_mass": r"$m(\mu, $b-Jet$_{0})$ [GeV]",
@@ -165,12 +165,12 @@ class HistogramPlotter:
                 
                 "mll":  r"$m(\mu\mu)$[GeV]",
                 "ptl1": r"$p_T(\mu_{leading})$ [GeV]",
+                "ptl2": r"$p_T(\mu_{subleading})$ [GeV]",
+                "ptll": r"$p_{T}(\mu\mu)$",
                 
-                "Z_mrec_mass": r"$m(Z)[GeV]",
-                "Z_mrec_pt": r"$p_T(Z)[GeV]",
+
                 "top_mrec": r"$m_{rec}(top)$ [GeV]",
                 
-                "leading_jet_pt": r"p_{T}(leading j)",
                 "njets":  r"$N(j)$", 
                 "njets_full":  r"$N(j + b)$", 
                 "nbjets": r"$N(b)$",    
@@ -205,14 +205,6 @@ class HistogramPlotter:
                 
                 "top_mrec": r"$m_{rec}(top)$ [GeV]",
                 "w_mrec": r"$m_{rec}(W)$ [GeV]",
-                "Z_mrec_mass": r"$m(Z)[GeV]",
-                "Z_mrec": r"$m_{rec}(Z)$ [GeV]",
-                "Z_charge": r"$Q(Z)$",
-                "lepton_one_pt": r"$p_{T}(\tau_{1})$ [GeV]",
-                "lepton_two_pt": r"$p_{T}(\tau_{2})$ [GeV]",
-                "l1_charge":  r"$Q(\tau_{1})$",
-                "l2_charge": r"$Q(\tau_{1})$",
-                "met_ztoll": r"$p_{T}^{miss}$",
                 
                 "njets":  r"$N(j)$", 
                 "njets_full":  r"$N(j + b)$", 
@@ -233,8 +225,8 @@ class HistogramPlotter:
                 "ST": r"ST",
                 "ST_met": r"$ST + p_{T}^{miss}$",
                 "ST_full": r"ST_full",
-                "ST_met_old":r"$ST + p_{T}^{miss}$",
-                
+                "ST_met_old":r"$ST + p_{T}^{miss} (old)$",
+                "ST_met_top":r"$ST + p_{T}^{miss} (top)$"  
             }
         }
 
@@ -319,7 +311,7 @@ class HistogramPlotter:
 
         
         # Finalize plot
-        self.save_and_show()
+        self.save_and_show(self.output_dir)
         
 
 
@@ -650,9 +642,9 @@ class HistogramPlotter:
     # --------------------------------
     #   Save pdf file
     # --------------------------------
-    def save_and_show(self) -> None:
+    def save_and_show(self, output_dir) -> None:
         """Save plot to file and display it"""
-        output_dir = "plots"
+
         os.makedirs(output_dir, exist_ok=True)
 
         if self.combined_2016:

@@ -165,7 +165,8 @@ def run_efficiency_curve_plot(
     main_back: str,
     year: str,
     distribution: str,
-    trigger_name: str = "HLT_PFMETNoMu120_PFMHTNoMu120_IDTight"
+    trigger_name: str = "HLT_PFMETNoMu120_PFMHTNoMu120_IDTight",
+    folder: str = "plots"
 ):
 
     all_samples = set(group_num.keys()) & set(group_den.keys())
@@ -201,7 +202,7 @@ def run_efficiency_curve_plot(
     )
 
     # Guardar tabla
-    df_eff_table.to_csv(f"eff_table_{main_back}_{year}_{distribution}.csv", index=False)
+    #df_eff_table.to_csv(f"eff_table_{main_back}_{year}_{distribution}.csv", index=False)
 
     # Mostrar el gráfico
     get_plot_efficiency_curve(
@@ -215,7 +216,8 @@ def run_efficiency_curve_plot(
         year=year,
         distribution=distribution,
         main_back=main_back,
-        trigger_name=trigger_name
+        trigger_name=trigger_name,
+        output_folder = folder
     )
 
     return df_eff_table
@@ -246,7 +248,8 @@ def error_band_fit(x_binning, fit_params, cov_matrix):
 # ---------------- Plotting ---------------- #
 def get_plot_efficiency_curve(
     binning, data_num, data_den, mc_num, mc_den, main_num, main_den,
-    year, distribution, main_back, trigger_name
+    year, distribution, main_back, trigger_name,
+    output_folder
 ):
     eff_data, eff_inc_data = process_efficiency(data_num, data_den)
     eff_mc, eff_inc_mc = process_efficiency(mc_num, mc_den)
@@ -352,6 +355,6 @@ def get_plot_efficiency_curve(
     ax_ratio.set_ylim(0.5, 1.2)
     ax_ratio2.set_ylim(0.5, 1.2)
 
-    filename = f"plots/eff_{main_back}_{year}_{distribution}.pdf"
+    filename = f"{output_folder}/eff_{main_back}/{year}/eff_{main_back}_{year}_{distribution}.pdf"
     plt.savefig(filename, format='pdf', bbox_inches='tight')
     plt.show()

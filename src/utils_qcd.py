@@ -285,7 +285,7 @@ def qcd_estimation(json_map, normalization, variation, grouped_samples=None,
     Returns:
         DataFrame con los resultados combinados
     """
-    QCD_squema_plot(cr = "wjets", shape = shape_region)
+    #QCD_squema_plot(cr = "wjets", shape = shape_region)
 
     # Cargar los JSONs de cada región de control
     cr_B_jsons = load_all_jsons(os.path.join(cr_B_folder, "summary", "metadata"))
