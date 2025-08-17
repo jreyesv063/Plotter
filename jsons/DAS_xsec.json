@@ -44,10 +44,13 @@
     "GluGluHToWWToLNuQQ": 28.88,
 
 
-    "SignalTau_600GeV": 4.75629,
-    "SignalTau_1TeV": 0.3886785,
-    "SignalTau_2TeV": 0.00917966,
-    "SignalTau_3TeV": 0.00107631,
+    "SignalTau_300GeV": 0.0055127,    
+    "SignalTau_400GeV": 0.00170216,    
+    "SignalTau_600GeV": 0.000288384,
+    "SignalTau_750GeV": 0.000101771,    
+    "SignalTau_1TeV": 0.000024368,
+    "SignalTau_2TeV": 0.000000517,
+    "SignalTau_3TeV": 0.000000047,
     
     "SignalElectron_600GeV": 29.6877596,
     "SignalElectron_1TeV": 5.23668126,

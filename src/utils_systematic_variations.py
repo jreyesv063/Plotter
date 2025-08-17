@@ -12,7 +12,7 @@ def load_systematic_variations(pkls, norms, variable, binning, with_plots, year,
     histograms = variation_histograms(pkls, norms, variable, binning)
 
     if with_plots:
-        plot_variation_histograms(histograms, binning, output_dir="plots", log=False)
+        plot_variation_histograms(histograms, binning, output_dir=output_dir, log=False)
 
     save_histograms_to_root(histograms, binning, output_dir=output_dir, region =region, lepton=lepton, year=year)
 
@@ -46,17 +46,17 @@ def variation_histograms(pkls, norm, distribution, binning):
         else:
             sample = sample
             
-        if "lepton_met_mass" not in arrays[sample] or "weights" not in arrays[sample]:
+        if distribution not in arrays[sample] or "weights" not in arrays[sample]:
             continue
     
         variation_map[sample] = {}
     
         # Primero, guarda el nominal si las longitudes coinciden
-        mass = arrays[sample]["lepton_met_mass"]
+        mass = arrays[sample][distribution]
         weights = arrays[sample]["weights"]
         if len(mass) == len(weights):
             variation_map[sample]["nominal"] = {
-                "lepton_met_mass": mass,
+                distribution: mass,
                 "weights": weights
             }
     
@@ -65,12 +65,12 @@ def variation_histograms(pkls, norm, distribution, binning):
             if key.startswith("weights_"):
                 var_suffix = key.replace("weights_", "")
                 weights = arrays[sample][key]
-                mass_key = f"lepton_met_mass_{var_suffix}"
-                mass = arrays[sample].get(mass_key, arrays[sample]["lepton_met_mass"])
+                mass_key = f"{distribution}_{var_suffix}"
+                mass = arrays[sample].get(mass_key, arrays[sample][distribution])
     
                 if len(mass) == len(weights):
                     variation_map[sample][var_suffix] = {
-                        "lepton_met_mass": mass,
+                        distribution: mass,
                         "weights": weights
                     }
 
@@ -88,7 +88,7 @@ def variation_histograms(pkls, norm, distribution, binning):
                 continue
 
             for variation, arrs in variation_map[sample].items():
-                values = arrs["lepton_met_mass"]
+                values = arrs[distribution]
                 weights = arrs["weights"] * norm[sample]
 
                 hist, _ = np.histogram(values, bins=bins, weights=weights)
@@ -127,7 +127,8 @@ def variation_histograms(pkls, norm, distribution, binning):
     return grouped_object_variations
     
 def plot_variation_histograms(histograms, binning, output_dir="plots", log=False, x_label="Variable", title_prefix=""):
-    os.makedirs(output_dir, exist_ok=True)
+    png_folder = os.path.join(output_dir, "png_files")
+    os.makedirs(png_folder, exist_ok=True)
     bin_centers = 0.5 * (np.array(binning[:-1]) + np.array(binning[1:]))
 
     sample_map = {
@@ -207,9 +208,10 @@ def plot_variation_histograms(histograms, binning, output_dir="plots", log=False
                    fontsize=10, frameon=False, ncol=2)
 
         plt.tight_layout(rect=[0, 0, 0.82, 1])  # espacio lateral para leyenda
-        plt.savefig(os.path.join(output_dir, f"{sample}_variations.png"))
+        plt.savefig(os.path.join(png_folder, f"{sample}_variations.png"))
         plt.show()
         plt.close()
+        print(f"png files have been stored in {png_folder}")
 
 
 

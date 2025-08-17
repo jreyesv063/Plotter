@@ -178,17 +178,23 @@ class HistogramPlotter:
                 "nmuons": r"$N(\mu)$",    
                 "nelectrons": r"$N(e)$",    
                 "ntaus": r"$N(\tau)$",   
+
+                "HT": "HT [GeV]",
+                "Z_gen_pt": "Z(gen-level) [GeV]",
+                "Z_gen_num": "n[Z(gen-level)]"
                 
             },
           "tau": {
                 "delta_phi_met_jet": r"$|$Delta$phi(jet, met)|",
                 "delta_phi_met_lepton": r"$|$Delta$phi($\tau$, met)|",
                 
-                "jet_pt": r"$p_T$(jet) [GeV]",
-                "bjet_pt": r"$p_T$(bjet$_{0}$) [GeV]",
-                "jet_eta": r"$\eta$(b-Jet$_{0}$)",
-                "jet_phi": r"$\phi$(b-Jet$_{0}$)",
-                "number_bjets": r"N(b-Jet)",
+                "jet_pt": r"$p_T$(jets) [GeV]",
+                "bjet_pt": r"$p_T$(bjet) [GeV]",
+                "bjet_phi": "$\phi(bjets)$",
+                "bjet_eta": r"$\eta$(bjets)",              
+                "jet_eta": r"$\eta$(jets)",
+                "jet_phi": r"$\phi$(jets)",
+
                 "met": r"$p_T^{miss}$ [GeV]",
                 "met_phi": r"$\phi(p_T^{miss})$",
                 "lepton_pt": r"$p_T(\tau)$ [GeV]",
@@ -207,8 +213,9 @@ class HistogramPlotter:
                 "w_mrec": r"$m_{rec}(W)$ [GeV]",
                 
                 "njets":  r"$N(j)$", 
-                "njets_full":  r"$N(j + b)$", 
-                "nbjets": r"$N(b)$",    
+                "njets_old": r"N(j)",
+                "njets_full":  r"$N(j + f + b)$", 
+                "nbjets": r"$N(b)$",                  
                 "npvs": r"$npvs$",    
                 "nmuons": r"$N(\mu)$",    
                 "nelectrons": r"$N(e)$",    
@@ -221,12 +228,14 @@ class HistogramPlotter:
                 "isolation_jets": r"\tau Vs jet",
                 "isolation_muons": r"\tau Vs \mu",
         
-                "HT": r"HT",
-                "ST": r"ST",
-                "ST_met": r"$ST + p_{T}^{miss}$",
-                "ST_full": r"ST_full",
-                "ST_met_old":r"$ST + p_{T}^{miss} (old)$",
-                "ST_met_top":r"$ST + p_{T}^{miss} (top)$"  
+                "HT": r"HT(j)",
+                "ST": r"$ST(\tau, j, f)$",
+                "ST_met": r"$ST(\tau, j, f, p_{T}^{miss})$",
+                "ST_full": r"$ST(e, \mu, \tau, j, f, p_{T}^{miss})$",
+                "ST_met_old":r"$ST(\tau, j, p_{T}^{miss} (old))$",
+                "ST_met_top":r"$ST + p_{T}^{miss} (top)$",
+                "recoil_pt":  r"$p_T^{miss}(recoil)$ [GeV]",
+                "recoil_phi":  r"$\phi(p_T^{miss}(recoil))$"
             }
         }
 
@@ -240,7 +249,10 @@ class HistogramPlotter:
             "dy": r"DY$(\ell\ell)$+jets",
             "higgs": "Higgs",
             "qcd": "QCD",
+            "SignalTau_300GeV": r"Signal ($m_{\tau}$=300 GeV)",   
+            "SignalTau_400GeV": r"Signal ($m_{\tau}$=400 GeV)",               
             "SignalTau_600GeV": r"Signal ($m_{\tau}$=600 GeV)",
+            "SignalTau_750GeV": r"Signal ($m_{\tau}$=750 GeV)",               
             "SignalTau_1TeV": r"Signal ($m_{\tau}$=1 TeV)",
             "SignalTau_2TeV": r"Signal ($m_{\tau}$=2 TeV)",
             "SignalTau_3TeV": r"Signal ($m_{\tau}$=3 TeV)",
