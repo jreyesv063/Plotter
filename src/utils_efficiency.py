@@ -70,7 +70,7 @@ def fit_efficiency_curve(binning, eff_data, a=None, b=None, c=None, d=None):
     return eff_fit, x_binning, parameters, covariance_matrix
 
 # ---------------- Helper: Build Efficiency Table ---------------- #
-def build_efficiency_table_from_fit(group_num, group_den, binning, main_back, fit_params):
+def build_efficiency_table_from_fit(group_num, group_den, binning, main_back, fit_params, cov_matrix):
     import numpy as np
     import pandas as pd
     from scipy.special import erf
@@ -80,6 +80,14 @@ def build_efficiency_table_from_fit(group_num, group_den, binning, main_back, fi
 
     def safe_divide(n1, n2):
         return np.divide(n1, n2, out=np.full_like(n1, np.nan, dtype=float), where=n2 != 0)
+
+    def calculate_binomial_uncertainty(num, den):
+        """Calcula incertidumbre binomial con cuidado para divisiones por cero"""
+        eff = get_eff(num, den)
+        mask = (den > 0) & (eff > 0) & (eff < 1)
+        inc = np.zeros_like(eff)
+        inc[mask] = np.sqrt(eff[mask] * (1 - eff[mask]) / den[mask])
+        return inc
 
     # --- Samples ---
     all_samples = set(group_num.keys()) & set(group_den.keys())
@@ -94,67 +102,86 @@ def build_efficiency_table_from_fit(group_num, group_den, binning, main_back, fi
     data_num = group_num["data"]
     data_den = group_den["data"]
     eff_data = get_eff(data_num, data_den)
+    eff_inc_data = calculate_binomial_uncertainty(data_num, data_den)
 
     # --- Main background ---
     main_num = group_num[main_back]
     main_den = group_den[main_back]
     eff_main = get_eff(main_num, main_den)
+    eff_inc_main = calculate_binomial_uncertainty(main_num, main_den)
 
-    # --- Total MC (todos los fondos) ---
+    # --- Total MC ---
     mc_num = sum(group_num[s] for s in mc_samples)
     mc_den = sum(group_den[s] for s in mc_samples)
     eff_mc = get_eff(mc_num, mc_den)
+    eff_inc_mc = calculate_binomial_uncertainty(mc_num, mc_den)
 
-    # --- Binning centers ---
+    # --- ENFOQUE ROBUSTO para cálculo de pesos ---
+    other_bkgs = [s for s in mc_samples if s != main_back]
+    other_num = sum(group_num[s] for s in other_bkgs)
+    other_den = sum(group_den[s] for s in other_bkgs)
+    
+    # Calcular eff_diff con cuidado con denominadores cero
+    diff_num = data_num - other_num
+    diff_den = data_den - other_den
+    eff_diff = get_eff(diff_num, diff_den)
+    
+    # Calcular incertidumbre para eff_diff (propagación más cuidadosa)
+    var_data = (data_num * (data_den - data_num)) / np.where(data_den > 0, data_den**3, 1)
+    var_other = (other_num * (other_den - other_num)) / np.where(other_den > 0, other_den**3, 1)
+    eff_diff_inc = np.sqrt(var_data + var_other)
+    
+    # Peso central
+    weights = safe_divide(eff_diff, eff_main)
+
+    # --- Propagación de error MEJORADA ---
+    # Para weight = eff_diff / eff_main
+    with np.errstate(divide='ignore', invalid='ignore'):
+        term1 = (eff_diff_inc**2) / (eff_main**2)
+        term2 = (eff_diff**2 * eff_inc_main**2) / (eff_main**4)
+        sigma_w = np.sqrt(term1 + term2)
+    
+    # Manejar casos especiales
+    sigma_w = np.nan_to_num(sigma_w, nan=0.0, posinf=0.0, neginf=0.0)
+    weights = np.nan_to_num(weights, nan=0.0, posinf=5.0, neginf=0.0)
+
+    # Variaciones sin límites artificiales estrictos
+    weight_up = weights + sigma_w
+    weight_down = weights - sigma_w
+    
+    # Solo límites físicos razonables
+    weight_up = np.clip(weight_up, 0.0, 5.0)    # Máximo 5.0 para ver variaciones
+    weight_down = np.clip(weight_down, 0.0, 5.0)
+
+    # --- Binning ---
     x_binning = [(binning[i] + binning[i+1]) / 2 for i in range(len(binning) - 1)]
+    bin_ranges = [f"[{binning[i]}, {binning[i+1]})" for i in range(len(binning) - 1)]
 
-    # --- Ajuste de curva
+    # --- Ajuste de curva (si es necesario) ---
     def eval_fit(x):
         a, b, c, d = fit_params
         return a + b * (1 + erf((np.sqrt(x) - c) / d))
 
-    fit_vals = np.array([eval_fit(x) for x in x_binning])
+    fit_vals = np.array([eval_fit(x) for x in x_binning]) if fit_params is not None else np.zeros_like(x_binning)
 
-    # --- Ratios
-    ratio_data_fit = safe_divide(eff_data, fit_vals)
-    ratio_data_main = safe_divide(eff_data, eff_main)
-    ratio_data_mc = safe_divide(eff_data, eff_mc)
-
-    # --- Cálculo del peso tipo "Data - (TotalBack - MainBack) / MainBack"
-    # Paso 1: reconstruir Data
-    n_data_num = group_num["data"]
-    n_data_den = group_den["data"]
-
-    # Paso 2: total back sin main
-    other_bkgs = [s for s in mc_samples if s != main_back]
-    other_num = sum(group_num[s] for s in other_bkgs)
-    other_den = sum(group_den[s] for s in other_bkgs)
-
-    # Paso 3: eficiencia tipo Data - (TotalBack - MainBack)
-    diff_num = n_data_num - other_num
-    diff_den = n_data_den - other_den
-    eff_diff = get_eff(diff_num, diff_den)
-
-    # Paso 4: dividir entre main back
-    weight = safe_divide(eff_diff, eff_main)
-
-    # --- DataFrame final ---
+    # --- DataFrame con 3 DECIMALES ---
     df = pd.DataFrame({
+        "bin_range": bin_ranges,
         "bin_center": x_binning,
-        #"data_num": data_num,
-        #"data_den": data_den,
-        "eff_data": np.round(eff_data, 3),
-        #"eff_fit": fit_vals,
-        #"ratio_data_fit": ratio_data_fit,
-        "eff_main": np.round(eff_main, 3),
-        #"ratio_data_main": ratio_data_main,
-        "eff_total_mc": np.round(eff_mc, 3),
-        #"ratio_data_total": ratio_data_mc,
-        "weight": np.round(weight, 3),
+        "eff_data": np.round(eff_data, 4),        # 4 decimales para ver mejor
+        "eff_main": np.round(eff_main, 4),
+        "eff_total_mc": np.round(eff_mc, 4),
+        "eff_diff": np.round(eff_diff, 4),
+        "weight": np.round(weights, 4),
+        "weight_up": np.round(weight_up, 4),
+        "weight_down": np.round(weight_down, 4),
+        "sigma_w": np.round(sigma_w, 6),          # 6 decimales para ver la incertidumbre
+        "eff_inc_data": np.round(eff_inc_data, 6),
+        "eff_inc_main": np.round(eff_inc_main, 6),
+        "eff_diff_inc": np.round(eff_diff_inc, 6),
     })
 
     return df
-
 
 
 # ---------------- Run Efficiency Curve ---------------- #
@@ -198,8 +225,10 @@ def run_efficiency_curve_plot(
         group_den=group_den,
         binning=binning,
         main_back=main_back,
-        fit_params=parameters
+        fit_params=parameters,
+        cov_matrix=covariance
     )
+
 
     # Guardar tabla
     #df_eff_table.to_csv(f"eff_table_{main_back}_{year}_{distribution}.csv", index=False)
@@ -251,10 +280,31 @@ def get_plot_efficiency_curve(
     year, distribution, main_back, trigger_name,
     output_folder
 ):
+    import numpy as np
+    import matplotlib.pyplot as plt
+    import hist
+    import mplhep as hep
+    
+    def get_eff(num, den):
+        return np.divide(num, den, out=np.full_like(num, np.nan, dtype=float), where=den != 0)
+    
+    def safe_divide(n1, n2):
+        return np.divide(n1, n2, out=np.full_like(n1, np.nan, dtype=float), where=n2 != 0)
+    
+    def process_efficiency(num, den):
+        eff = get_eff(num, den)
+        # Calcular incertidumbre binomial
+        inc = np.zeros_like(eff)
+        mask = (den > 0) & (eff > 0) & (eff < 1)
+        inc[mask] = np.sqrt(eff[mask] * (1 - eff[mask]) / den[mask])
+        return eff, inc
+
+    # --- Calcular eficiencias ---
     eff_data, eff_inc_data = process_efficiency(data_num, data_den)
     eff_mc, eff_inc_mc = process_efficiency(mc_num, mc_den)
     eff_main, eff_inc_main = process_efficiency(main_num, main_den)
 
+    # --- Fit de la curva ---
     eff_data_fit, x_binning, parameters, covariance = fit_efficiency_curve(
         binning, eff_data,
         a=min(eff_data), b=max(eff_data) - min(eff_data), c=5, d=2
@@ -267,9 +317,39 @@ def get_plot_efficiency_curve(
     xerr = np.diff(binning) / 2
     if len(xerr) != len(x_binning):
         xerr = np.append(xerr, xerr[-1])
-    xerr = xerr[:len(x_binning)]  # match exact length
+    xerr = xerr[:len(x_binning)]
 
-    # Ratio fit
+    # --- CÁLCULO ROBUSTO DE PESOS ---
+    # Reconstruir "Data - Otros fondos" a nivel de conteos
+    # Asumiendo que mc_num incluye TODOS los fondos (main + otros)
+    other_num = mc_num - main_num  # Otros fondos = Total MC - Main
+    other_den = mc_den - main_den
+    
+    # Calcular eficiencia de (Data - Otros fondos)
+    diff_num = data_num - other_num
+    diff_den = data_den - other_den
+    eff_diff = get_eff(diff_num, diff_den)
+    
+    # Calcular peso final
+    weights = safe_divide(eff_diff, eff_main)
+    
+    # --- Propagación de error MEJORADA para pesos ---
+    # Incertidumbre para eff_diff
+    var_data = (data_num * (data_den - data_num)) / np.where(data_den > 0, data_den**3, 1)
+    var_other = (other_num * (other_den - other_num)) / np.where(other_den > 0, other_den**3, 1)
+    eff_diff_inc = np.sqrt(var_data + var_other)
+    
+    # Propagación para weight = eff_diff / eff_main
+    with np.errstate(divide='ignore', invalid='ignore'):
+        term1 = (eff_diff_inc**2) / (eff_main**2)
+        term2 = (eff_diff**2 * eff_inc_main**2) / (eff_main**4)
+        sigma_w = np.sqrt(term1 + term2)
+    
+    # Manejar casos especiales
+    sigma_w = np.nan_to_num(sigma_w, nan=0.0, posinf=0.0, neginf=0.0)
+    weights = np.nan_to_num(weights, nan=0.0, posinf=5.0, neginf=0.0)
+
+    # --- Ratio fit ---
     ratio_data_fit = eff_data / eff_data_fit
     ratio_inc_data_fit = std_devs
     upper_band = 1 + ratio_inc_data_fit
@@ -278,7 +358,7 @@ def get_plot_efficiency_curve(
     band_up = eff_data_fit + std_devs
     band_down = eff_data_fit - std_devs
 
-    # Extiende un punto más al final para bandas
+    # Extender para bandas
     delta_x = x_binning[-1] - x_binning[-2] if len(x_binning) > 1 else 1.0
     X_fill = np.append(x_binning, x_binning[-1] + delta_x)
     fit_extended = np.append(eff_data_fit, eff_data_fit[-1])
@@ -301,8 +381,9 @@ def get_plot_efficiency_curve(
         "st": "SingleTop"
     }
 
-    fig, (ax, ax_ratio, ax_ratio2) = plt.subplots(
-        nrows=3, ncols=1, figsize=(8, 10), gridspec_kw={'height_ratios': [3, 1, 1]}
+    fig, (ax, ax_ratio, ax_ratio2, ax_weight) = plt.subplots(
+        nrows=4, ncols=1, figsize=(8, 12),
+        gridspec_kw={'height_ratios': [3, 1, 1, 1]}
     )
     plt.subplots_adjust(hspace=0.1)
 
@@ -310,35 +391,54 @@ def get_plot_efficiency_curve(
     eff_mc_max_error = np.minimum(eff_mc + eff_inc_mc, 1.0) - eff_mc
     eff_main_max_error = np.minimum(eff_main + eff_inc_main, 1.0) - eff_main
 
-    ax.errorbar(x_binning, eff_data, xerr=xerr, fmt='o', yerr=(eff_inc_data, eff_data_max_error), color="black", lw=0.5, label="Data")
-    ax.errorbar(x_binning, eff_mc, fmt='o', yerr=(eff_inc_mc, eff_mc_max_error), color="blue", lw=0.5, label="Total bgr")
-    ax.errorbar(x_binning, eff_main, fmt='o', yerr=(eff_inc_main, eff_main_max_error), color="green", lw=0.5, label=f"Main bgr: {back_map.get(main_back, main_back)}")
+    # --- Plot 1: Efficiency ---
+    ax.errorbar(x_binning, eff_data, xerr=xerr, 
+                yerr=(eff_inc_data, eff_data_max_error), fmt='o', 
+                color="black", lw=0.5, label="Data")
+    ax.errorbar(x_binning, eff_mc, fmt='o', 
+                yerr=(eff_inc_mc, eff_mc_max_error), color="blue", 
+                lw=0.5, label="Total bgr")
+    ax.errorbar(x_binning, eff_main, fmt='o', 
+                yerr=(eff_inc_main, eff_main_max_error), color="green", 
+                lw=0.5, label=f"Main bgr: {back_map.get(main_back, main_back)}")
     ax.plot(X_fill, fit_extended, label='Fit', color='red')
     ax.fill_between(X_fill, main_y_down, main_y_up, color='cyan', alpha=1, label='Stat. fit unc.')
 
+    # --- Plot 2: Ratio Data/Fit ---
     ax_ratio.errorbar(x_binning, ratio_data_fit, xerr=xerr,
-                      yerr=(eff_inc_data / eff_data, eff_data_max_error / eff_data), fmt='o', color="black", lw=0.5)
+                      yerr=(eff_inc_data / eff_data, eff_data_max_error / eff_data),
+                      fmt='o', color="black", lw=0.5)
     ax_ratio.fill_between(X_fill, ratio_y_down, ratio_y_up, color='cyan', alpha=1)
     ax_ratio.axhline(y=1, color='red', linestyle='--')
 
+    # --- Plot 3: Ratio Data/MC ---
     ax_ratio2.errorbar(x_binning, ratio_data_bgr, xerr=xerr,
-                       yerr=(ratio_inc_data_bgr, ratio_inc_data_bgr), fmt='o', color="blue", lw=0.5)
+                       yerr=(ratio_inc_data_bgr, ratio_inc_data_bgr),
+                       fmt='o', color="blue", lw=0.5)
     ax_ratio2.axhline(y=1, color='red', linestyle='--')
 
+    # --- Plot 4: PESOS CORRECTOS con barras de error ---
+    ax_weight.errorbar(x_binning, weights, xerr=xerr, yerr=sigma_w,
+                       fmt='o', color="purple", lw=0.5, label="Weights")
+    ax_weight.axhline(y=1, color='red', linestyle='--')
+    ax_weight.legend()
+
+    # Formatting
     ax.tick_params(axis='x', labelbottom=False)
     ax_ratio.tick_params(axis='x', labelbottom=False)
+    ax_ratio2.tick_params(axis='x', labelbottom=False)
 
     ax.set_ylabel(r'$\varepsilon$', fontsize=14)
     ax_ratio.set_ylabel(r'$\varepsilon_{(Data)}$ / Fit', fontsize=12)
     ax_ratio2.set_ylabel(r'$\varepsilon_{\mathrm{Data}} / \varepsilon_{\mathrm{Total\;Bgr}}$', fontsize=12)
-
+    ax_weight.set_ylabel("Weight", fontsize=12)
 
     label_map = {
         "recoil_pt": r'$p_{T}^{miss}(recoil) [GeV]$',
         "pt_nomu_plus": r'$p_{T}^{miss}(\mu) [GeV]$',
         "": r'$p_{T}^{miss} [GeV]$'
     }
-    ax_ratio2.set_xlabel(label_map.get(distribution, distribution), fontsize=12)
+    ax_weight.set_xlabel(label_map.get(distribution, distribution), fontsize=12)
 
     lumi_text = {
         "2017": "41.5 fb$^{-1}$ (2017, 13 TeV)",
@@ -349,11 +449,13 @@ def get_plot_efficiency_curve(
     hep.cms.lumitext(lumi_text.get(year, year), fontsize=12, ax=ax)
     hep.cms.text("Preliminary", loc=0, fontsize=14, ax=ax)
     ax.legend(loc='best', bbox_to_anchor=(1.0, 0.35), ncol=2, fontsize=11)
-    ax.text(0.35, 0.5, trigger_name, transform=ax.transAxes, fontsize=12, verticalalignment='top', color='hotpink')
+    ax.text(0.35, 0.5, trigger_name, transform=ax.transAxes, fontsize=12,
+            verticalalignment='top', color='hotpink')
 
     ax.set_ylim(0.0, 1.1)
     ax_ratio.set_ylim(0.5, 1.2)
     ax_ratio2.set_ylim(0.5, 1.2)
+    ax_weight.set_ylim(0.0, 3.0)  # Ajustado para pesos de trigger
 
     filename = f"{output_folder}/eff_{main_back}/{year}/eff_{main_back}_{year}_{distribution}.pdf"
     plt.savefig(filename, format='pdf', bbox_inches='tight')
