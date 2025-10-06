@@ -6,7 +6,8 @@ from collections import defaultdict
 import matplotlib.patches as patches
 from typing import Dict, Any, Optional, List
 
-from src.utils import load_all_pickles, load_all_jsons
+from src.utils import load_all_pickles, load_all_jsons, get_rename_map, get_weights
+from src.utils_errors import get_table_cutflow_unscaled, compute_eff_cutflow, compute_statistical_error
 
 
 def QCD_squema_plot(cr: str, shape: str):
@@ -109,76 +110,61 @@ def QCD_squema_plot(cr: str, shape: str):
     plt.show()
 
 
-def get_qcd_cutflow(json_map, normalization, variation, grouped_samples=None, combined_samples=False, combined_2016=False):
-    def get_rename_map(groups):
-        return {k: k for k in groups}  # identidad si no hay renombres
+def get_qcd_cutflow(json_map, normalization, variation,
+                    grouped_samples=None, combined_samples=False, combined_2016=False):
+    """
+    Construye la tabla de cutflow con Data, Total MC y QCD (Data - MC) con errores propagados.
+    """
+    pd.set_option('display.float_format', '{:.2f}'.format)
 
-    def compute_eff_cutflow(cutflow_table, normalization):
-        scaled_errors = {}
-        for sample, cuts in cutflow_table.items():
-            norm = normalization.get(sample, 1.0)
-            errors = {}
-            for cut, value in cuts.items():
-                try:
-                    val = float(value) * norm
-                    errors[cut] = np.sqrt(val)
-                except:
-                    errors[cut] = 0.0
-            scaled_errors[sample] = errors
-        return {}, scaled_errors
+    # --------------------------------------------------------------------------
+    # Filtrar señales de QCD
+    # --------------------------------------------------------------------------
+    json_map = {k: v for k, v in json_map.items() if not k.startswith("Signal")}
+    normalization = {k: v for k, v in normalization.items() if not k.startswith("Signal")}
 
-    def get_table_cutflow_unscaled(json_map):
-        out = {}
-        for dataset, content in json_map.items():
-            if "cutflow" in content:
-                out[dataset] = content["cutflow"]
-        return out
+    if grouped_samples is not None:
+        grouped_samples = {
+            g: [s for s in samples if not s.startswith("Signal")]
+            for g, samples in grouped_samples.items()
+        }
+        grouped_samples = {g: s for g, s in grouped_samples.items() if s}
 
-    _, scaled_error_df = compute_eff_cutflow(
-        cutflow_table=get_table_cutflow_unscaled(json_map),
+    # --------------------------------------------------------------------------
+    result_map, scaled_error_df = compute_eff_cutflow(
+        cutflow_table=get_table_cutflow_unscaled(json_map, "cutflow_raw"),
         normalization=normalization
     )
 
-    if combined_2016:
-        sample_ref = "ST_tW_top_5f_inclusiveDecays_2016"
-    else:
-        sample_ref = "ST_tW_top_5f_inclusiveDecays"
-        
-
-    allowed_variations = [key for key in json_map[sample_ref].keys() if key.startswith("cutflow")]
-    if variation not in allowed_variations:
-        raise ValueError(f"❌ La variation '{variation}' no está en los datasets.")
-
-    # Armar base de cortes
-    for ds in json_map:
-        if variation in json_map[ds]:
-            base_cuts = list(json_map[ds][variation].keys())
-            break
-    else:
-        raise ValueError(f"No se encontró la variation {variation} en ningún dataset.")
-
+    is_cutflow = variation.startswith("cutflow")
     cutflow_scaled = {}
 
+    # Determinar los cuts base
+    try:
+        base_cuts = next(
+            list(json_map[ds][variation].keys()) for ds in json_map if variation in json_map[ds]
+        )
+    except StopIteration:
+        raise ValueError(f"❌ Ningún dataset contiene la variation '{variation}'")
+
+    # --------------------------------------------------------------------------
+    # Escalado normal de todos los datasets
+    # --------------------------------------------------------------------------
     for dataset in json_map:
         norm = float(normalization.get(dataset, 1.0))
         cutflow_nominal = json_map[dataset].get("cutflow", {})
 
-        if dataset in ['SingleElectron', 'SingleMuon', 'Tau', 'MET']:
+        # --- DATA ---
+        if dataset.split("_")[0] in ['SingleElectron', 'SingleMuon', 'Tau', 'MET']:
+            # Dataset con sufijo de año
             scaled = {}
             for cut in base_cuts:
                 value = cutflow_nominal.get(cut)
-                if value is None:
-                    suffix = "_" + variation.split("cutflow")[-1].lstrip("_")
-                    if cut.endswith(suffix):
-                        cut_base = cut.removesuffix(suffix)
-                        value = cutflow_nominal.get(cut_base)
-                try:
-                    scaled[cut] = float(value) * norm if value is not None else None
-                except:
-                    scaled[cut] = None
+                scaled[cut] = float(value) * norm if value is not None else 0.0
             cutflow_scaled[dataset] = scaled
             continue
 
+        # --- MC ---
         cutflow_source = json_map[dataset].get(variation, {})
         scaled = {}
         for cut in base_cuts:
@@ -186,119 +172,151 @@ def get_qcd_cutflow(json_map, normalization, variation, grouped_samples=None, co
             if value is None:
                 base_cut = cut.rsplit("_", 1)[0] if "_" in cut else cut
                 value = cutflow_nominal.get(base_cut)
-            try:
-                scaled[cut] = float(value) * norm if value is not None else None
-            except:
-                scaled[cut] = None
+            scaled[cut] = float(value) * norm if value is not None else None
         cutflow_scaled[dataset] = scaled
 
-    df = pd.DataFrame.from_dict(cutflow_scaled, orient="index").transpose()
+    # --------------------------------------------------------------------------
+    # Combinar Data si combined_2016=True
+    # --------------------------------------------------------------------------
+    if combined_2016:
+        data_keys = [k for k in cutflow_scaled.keys() if k.startswith(("MET", "SingleMuon", "SingleElectron", "Tau"))]
+        if data_keys:
+            # Sumar ambos años por cut
+            combined_data = {}
+            for cut in base_cuts:
+                combined_data[cut] = sum(cutflow_scaled.get(k, {}).get(cut, 0.0) for k in data_keys)
+            # Guardar bajo una clave única "Data"
+            cutflow_scaled["Data_combined"] = combined_data
+            data_dataset = "Data_combined"
+    else:
+        # Single year: solo tomar el primer dataset de Data que exista
+        for k in cutflow_scaled.keys():
+            if k.split("_")[0] in ['MET', 'SingleMuon', 'SingleElectron', 'Tau']:
+                data_dataset = k
+                break
 
-    # Agrupar muestras si se pide (solo para MC, no para datos)
+    # --------------------------------------------------------------------------
+    # Convertir a DataFrame
+    # --------------------------------------------------------------------------
+    df = pd.DataFrame.from_dict(cutflow_scaled, orient="index").transpose()
+    sumw_row = df.loc["sumw"].copy() if "sumw" in df.index else None
+
+    # --------------------------------------------------------------------------
+    # Combinar samples si combined_samples=True
+    # --------------------------------------------------------------------------
     if combined_samples and grouped_samples:
         grouped_cutflows = defaultdict(lambda: defaultdict(float))
+        grouped_errors = defaultdict(lambda: defaultdict(float))
+
         for group_name, samples in grouped_samples.items():
             for sample in samples:
-                # Solo procesar muestras que no son datos
-                if sample not in ['SingleElectron', 'SingleMuon', 'Tau', 'MET']:
-                    for cut in df.index:
-                        val = df.get(sample, {}).get(cut)
-                        if val is not None:
-                            grouped_cutflows[group_name][cut] += val
+                for cut in base_cuts:
+                    value = cutflow_scaled[sample].get(cut)
+                    error = scaled_error_df.get(sample, {}).get(cut)
+                    if value is not None:
+                        grouped_cutflows[group_name][cut] += value
+                    if error is not None:
+                        grouped_errors[group_name][cut] += error ** 2
+
+        for group_name in grouped_errors:
+            for cut in grouped_errors[group_name]:
+                grouped_errors[group_name][cut] = np.sqrt(grouped_errors[group_name][cut])
+
         df_grouped = pd.DataFrame.from_dict(grouped_cutflows, orient="index").transpose()
-        df_grouped = df_grouped.rename(columns=get_rename_map(grouped_samples))
-        
-        # Calcular el Total MC (suma de todos los fondos conocidos)
-        mc_columns = [col for col in df_grouped.columns if col not in ['SingleElectron', 'SingleMuon', 'Tau', 'MET']]
-        df_grouped["Total MC"] = df_grouped[mc_columns].sum(axis=1)
-        
-        # Mantener los datos originales
-        for data_type in ['SingleElectron', 'SingleMuon', 'Tau', 'MET']:
-            if data_type in df.columns:
-                df_grouped[data_type] = df[data_type]
-        
-        df = df_grouped
+        error_grouped_df = pd.DataFrame.from_dict(grouped_errors, orient="index").transpose()
+        rename_columns = get_rename_map(grouped_samples)
+        df_grouped = df_grouped.rename(columns=rename_columns)
+        error_grouped_df = error_grouped_df.rename(columns=rename_columns)
 
-    # Calcular Data (suma de todos los datasets de datos)
-    data_samples = [ds for ds in json_map if ds in ['SingleElectron', 'SingleMuon', 'Tau', 'MET']]
-    df["Data"] = 0.0
-    for dataset in data_samples:
+        bkg_cols = [col for col in df_grouped.columns if not col.startswith("Data")]
+        df_grouped["Total"] = df_grouped[bkg_cols].sum(axis=1)
+        error_grouped_df["Total"] = np.sqrt(np.square(error_grouped_df[bkg_cols]).sum(axis=1))
+
+        # Data combinado o simple
+        df_grouped[f"Data ({data_dataset})"] = df_grouped.index.map(
+            lambda cut: cutflow_scaled[data_dataset].get(cut, 0.0)
+        )
+
+        # Construcción tabla final
+        data_with_err = []
+        total_with_err = []
+        qcd_with_err = []
+        for cut in df_grouped.index:
+            data_val = df_grouped.at[cut, f"Data ({data_dataset})"] if f"Data ({data_dataset})" in df_grouped.columns else 0.0
+            total_val = df_grouped.at[cut, "Total"]
+            err_data = np.sqrt(data_val) if data_val > 0 else 0.0
+            err_total = error_grouped_df.at[cut, "Total"] if "Total" in error_grouped_df.columns else 0.0
+            data_with_err.append(f"{data_val:.2f} ± {err_data:.2f}")
+            total_with_err.append(f"{total_val:.2f} ± {err_total:.2f}")
+            diff = data_val - total_val
+            err_qcd = np.sqrt(err_data**2 + err_total**2)
+            qcd_with_err.append(f"{diff:.2f} ± {err_qcd:.2f}")
+
+        result_df = pd.DataFrame({
+            "Data": data_with_err,
+            "Total": total_with_err,
+            "QCD (D-D)": qcd_with_err
+        }, index=df_grouped.index)
+
+        if sumw_row is not None:
+            result_df.loc["sumw"] = ""
+        return result_df
+
+    # --------------------------------------------------------------------------
+    # Caso sin combinación de samples
+    # --------------------------------------------------------------------------
+    df_with_errors = df.copy()
+    for col in df.columns:
         for cut in df.index:
-            val = cutflow_scaled[dataset].get(cut)
-            if val is not None:
-                df.at[cut, "Data"] += val
+            val = df.at[cut, col]
+            err = scaled_error_df.get(col, {}).get(cut)
+            if cut == "sumw":
+                df_with_errors.at[cut, col] = f"{val:.2f}" if pd.notna(val) else ""
+            elif col.startswith("Data"):
+                err_data = np.sqrt(val) if val > 0 else 0.0
+                df_with_errors.at[cut, col] = f"{val:.2f} ± {err_data:.2f}"
+            elif pd.notna(val) and pd.notna(err):
+                df_with_errors.at[cut, col] = f"{val:.2f} ± {err:.2f}"
+            else:
+                df_with_errors.at[cut, col] = ""
+    if sumw_row is not None:
+        df_with_errors.loc["sumw"] = sumw_row
 
-    # Calcular Total MC si no se ha calculado ya
-    if "Total MC" not in df.columns:
-        mc_samples = [col for col in df.columns if col not in ['SingleElectron', 'SingleMuon', 'Tau', 'MET', 'Data']]
-        df["Total MC"] = df[mc_samples].sum(axis=1)
+    return df_with_errors
 
-    # Calcular QCD (D-D) y su error
-    qcd_values = []
-    for cut in df.index:
-        data_val = df.at[cut, "Data"]
-        total_mc_val = df.at[cut, "Total MC"]
-        err_data = np.sqrt(data_val) if data_val > 0 else 0.0
-        
-        # Calcular error total MC (suma en cuadratura de errores individuales)
-        err_total_mc = 0.0
-        for sample, errors in scaled_error_df.items():
-            if sample not in ['SingleElectron', 'SingleMuon', 'Tau', 'MET']:
-                err_total_mc += errors.get(cut, 0.0)**2
-        err_total_mc = np.sqrt(err_total_mc)
 
-        if pd.notna(data_val) and pd.notna(total_mc_val):
-            diff = data_val - total_mc_val
-            err = np.sqrt(err_data**2 + err_total_mc**2)
-            qcd_values.append(f"{diff:.2f} ± {err:.2f}")
-        else:
-            qcd_values.append("")
-
-    # Crear DataFrame final con las columnas requeridas
-    result_df = pd.DataFrame({
-        "Data": df["Data"].round(2),
-        "Total MC": df["Total MC"].round(2),
-        "QCD (D-D)": qcd_values
-    }, index=df.index)
-
-    return result_df
-def qcd_estimation(json_map, normalization, variation, grouped_samples=None, 
+def qcd_estimation(variation, 
+                   grouped_samples=None, 
                   combined_samples=False, combined_2016=False, 
-                  cr_B_folder="", cr_C_folder="", cr_D_folder="",
+                  cr_BCD_normalization=None, cr_BCD_jsons=None,
                   shape_region="cr_b", ratio_regions=["cr_c", "cr_d"]):
     """
     Calcula la estimación de QCD combinando tres regiones de control.
     
     Args:
-        json_map: Mapa JSON para la región principal
-        normalization: Factores de normalización
         variation: Variación del cutflow a usar
         grouped_samples: Grupos de muestras para combinar
         combined_samples: Si combinar muestras
         combined_2016: Si usar combinación para 2016
-        cr_B_folder: Carpeta con JSONs para región B
-        cr_C_folder: Carpeta con JSONs para región C
-        cr_D_folder: Carpeta con JSONs para región D
+        cr_BCD_normalization: Diccionario para las 3 regiones de control, cr_b; cr_c; cr_d. COntiene Luminosidad * xsec/sumw
+        cr_BCD_jsons:  Diccionario para las 3 regiones de control, cr_b; cr_c; cr_d
         shape_region: Región para shape (cr_b, cr_c o cr_d)
         ratio_regions: Lista [X, Y] para el ratio X/Y
         
     Returns:
         DataFrame con los resultados combinados
     """
-    #QCD_squema_plot(cr = "wjets", shape = shape_region)
+    # Obtener los cutflows de QCD para cada región  
+    cr_b_qcd = get_qcd_cutflow(cr_BCD_jsons[shape_region], cr_BCD_normalization[shape_region], variation, 
+                              grouped_samples, combined_samples, combined_2016)
+    
+    cr_c_qcd = get_qcd_cutflow(cr_BCD_jsons[ratio_regions[0]], cr_BCD_normalization[ratio_regions[0]], variation,
+                              grouped_samples, combined_samples, combined_2016)
+    
+    cr_d_qcd = get_qcd_cutflow(cr_BCD_jsons[ratio_regions[1]], cr_BCD_normalization[ratio_regions[1]], variation,
+                              grouped_samples, combined_samples, combined_2016)
 
-    # Cargar los JSONs de cada región de control
-    cr_B_jsons = load_all_jsons(os.path.join(cr_B_folder, "summary", "metadata"))
-    cr_C_jsons = load_all_jsons(os.path.join(cr_C_folder, "summary", "metadata"))
-    cr_D_jsons = load_all_jsons(os.path.join(cr_D_folder, "summary", "metadata"))
 
-    # Obtener los cutflows de QCD para cada región
-    cr_b_qcd = get_qcd_cutflow(cr_B_jsons, normalization, variation, 
-                              grouped_samples, combined_samples, combined_2016)
-    cr_c_qcd = get_qcd_cutflow(cr_C_jsons, normalization, variation,
-                              grouped_samples, combined_samples, combined_2016)
-    cr_d_qcd = get_qcd_cutflow(cr_D_jsons, normalization, variation,
-                              grouped_samples, combined_samples, combined_2016)
 
     # Verificar que tenemos las regiones necesarias
     available_regions = {
@@ -387,150 +405,255 @@ def qcd_estimation(json_map, normalization, variation, grouped_samples=None,
     return pd.DataFrame(results).set_index("Cut")
 
 
+
 def get_qcd_estimation_shape(
     pkls,
     bins: np.ndarray,
     distribution: str,
     consider_overflow: bool = True,
     consider_underflow: bool = True,
-    normalization_factors: Optional[Dict[str, float]] = None
-) -> np.ndarray:
+    normalization_factors: Optional[Dict[str, float]] = None,
+    combined_2016: bool = True
+) -> (np.ndarray, np.ndarray):
     """
-    Autonomously estimates QCD background by identifying data samples and subtracting all MC backgrounds.
-    
-    Args:
-        pkls: Dictionary of samples {sample_name: {subkey: arrays}}
-        bins: Bin edges for the histogram
-        distribution: Variable name to histogram
-        consider_overflow: Include overflow in last bin
-        consider_underflow: Include underflow in first bin
-        normalization_factors: Optional scale factors for MC samples {sample_name: factor}
-        
-    Returns:
-        Estimated QCD histogram
-        
-    Raises:
-        ValueError: If no data samples are found
+    Estimates QCD background from data minus MC.
+    Returns (qcd, qcd_err), where:
+      - data error = sqrt(N_data)
+      - MC error   = compute_statistical_error(bin, total) * total
     """
-    # Auto-detect data samples (looking for typical CMS data naming patterns)
+
     def is_data_sample(sample_name: str) -> bool:
         data_patterns = {
-            'SingleMuon', 'SingleElectron', 'DoubleMuon', 'DoubleEG', 
+            'SingleMuon', 'SingleElectron', 'DoubleMuon', 'DoubleEG',
             'Tau', 'MET', 'JetHT', 'EGamma', 'HTMHT', 'ZeroBias'
         }
         return any(sample_name.startswith(pattern) for pattern in data_patterns)
 
-    # Initialize accumulators
-    total_data = np.zeros(len(bins)-1)
-    total_mc = np.zeros(len(bins)-1)
+    def compute_qcd_for_subset(sub_pkls):
+        nbins = len(bins) - 1
+        total_data = np.zeros(nbins)
+        total_mc = np.zeros(nbins)
+
+        total_data_int = 0.0
+        total_mc_int = 0.0
+
+        # Construir histogramas
+        for sample_name, sample_data in sub_pkls.items():
+            base_name = sample_name.rsplit('_', 1)[0] if sample_name.endswith(("2016", "2016APV")) else sample_name
+            arrays = sample_data.get(base_name, None)
+            if arrays is None or distribution not in arrays:
+                continue
+
+            is_data = is_data_sample(base_name)
+            weights = None if is_data else arrays.get("weights")
+            variable = arrays[distribution]
+
+            hist, _ = np.histogram(variable, bins=bins, weights=weights)
+
+            # Under/overflow
+            if consider_underflow:
+                mask_under = variable < bins[0]
+                hist[0] += np.sum(weights[mask_under] if weights is not None else mask_under.sum())
+            if consider_overflow:
+                mask_over = variable > bins[-1]
+                hist[-1] += np.sum(weights[mask_over] if weights is not None else mask_over.sum())
+
+            # Normalización MC
+            if not is_data and normalization_factors:
+                hist *= normalization_factors.get(sample_name, 1.0)
+
+            if is_data:
+                total_data += hist
+                total_data_int += np.sum(hist)
+            else:
+                total_mc += hist
+                total_mc_int += np.sum(hist)
+
+        if total_data_int == 0:
+            print("⚠️ Atención: No se encontraron muestras de data en este subset de pkls")
+            return np.zeros(nbins), np.zeros(nbins)
+
+        # Errores bin a bin
+        data_err = np.sqrt(total_data)  # Poisson
+        mc_err = np.zeros(nbins)
+
+        if total_mc_int > 0:
+            for i in range(nbins):
+                n_bin = total_mc[i]
+                eff_err = compute_statistical_error(n_bin, total_mc_int)
+                mc_err[i] = eff_err * total_mc_int
+
+        # QCD y propagación de incertidumbre
+        qcd_raw = total_data - total_mc
+        qcd = np.clip(qcd_raw, 0, None)
+        qcd_err = np.sqrt(data_err**2 + mc_err**2)
+
+        # Normalización global (como en tu código original)
+        data_int = np.sum(total_data)
+        mc_int = np.sum(total_mc)
+        qcd_sum = np.sum(qcd)
+        if data_int > mc_int and qcd_sum > 0:
+            S = (data_int - mc_int) / qcd_sum
+            qcd *= S
+            qcd_err *= S
+
+        return qcd, qcd_err
+
+    if combined_2016:
+        pkls_2016 = {k: v for k, v in pkls.items() if k.endswith("_2016")}
+        pkls_2016APV = {k: v for k, v in pkls.items() if k.endswith("_2016APV")}
+
+        qcd_2016, err_2016 = compute_qcd_for_subset(pkls_2016)
+        qcd_2016APV, err_2016APV = compute_qcd_for_subset(pkls_2016APV)
+
+        qcd_sum = qcd_2016 + qcd_2016APV
+        err_sum = np.sqrt(err_2016**2 + err_2016APV**2)
+        return qcd_sum, err_sum
+    else:
+        return compute_qcd_for_subset(pkls)
 
 
 
-    for sample_name, sample_data in pkls.items():
-        # Handle nested structure (2016APV cases)
-        subkey = sample_name.rsplit('_', 1)[0] if '_2016APV' in sample_name else sample_name
-        if subkey not in sample_data:
-            continue
-            
-        arrays = sample_data[subkey]
-        if distribution not in arrays:
-            continue
-            
-        is_data = is_data_sample(sample_name)
-        weights = None if is_data else arrays.get("weights")
 
-        # Compute base histogram
-        variable = arrays[distribution]
-        hist, _ = np.histogram(variable, bins=bins, weights=weights)
-
-        # Apply overflow/underflow corrections
-        if consider_underflow or consider_overflow:
-            mask_under = variable < bins[0]
-            mask_over = variable > bins[-1]
-            
-            correction = np.sum(weights[mask_under] if weights is not None else mask_under.sum()) if consider_underflow else 0
-            hist[0] += correction
-            
-            correction = np.sum(weights[mask_over] if weights is not None else mask_over.sum()) if consider_overflow else 0
-            hist[-1] += correction
-
-        # Apply normalization if provided and MC
-        if not is_data and normalization_factors:
-            hist *= normalization_factors.get(sample_name, 1.0)
-
-        # Accumulate
-        if is_data:
-            total_data += hist
-        else:
-            total_mc += hist
-
-    # Verify we found data
-    if np.sum(total_data) == 0:
-        raise ValueError("No data samples found - cannot estimate QCD")
-
-    # Calculate QCD (with physical constraints)
-    qcd = total_data - total_mc
-    qcd = np.clip(qcd, 0, None)  # Remove negative bins
-    
-    # Optional: Normalize to data-MC difference in integral
-    data_int = np.sum(total_data)
-    mc_int = np.sum(total_mc)
-    if data_int > mc_int and np.sum(qcd) > 0:
-        qcd *= (data_int - mc_int) / np.sum(qcd)
-
-    return qcd
-
+"""
 def transfer_factor_qcd(
-    num_folder: str,
-    den_folder: str,
-    bins: np.ndarray,
-    distribution: str,
-    consider_overflow: bool = True,
-    consider_underflow: bool = True,
-    normalization_factors: Optional[Dict[str, float]] = None,
-    integrated: bool = False
-) -> np.ndarray:
-    # Read pkl files:
-    pkls_num = load_all_pickles(num_folder)
-    pkls_den = load_all_pickles(den_folder)
+    pkls, normalization,
+    qcd_ratio,
+    binning, distribution,
+    consider_overflow, consider_underflow,
+    integrated,
+    combined_2016
+):
+  
+    qcd_shape_num, qcd_error_num = get_qcd_estimation_shape(pkls[qcd_ratio[0]], binning, distribution, consider_overflow, consider_underflow, normalization[qcd_ratio[0]], combined_2016 = combined_2016)
 
-    qcd_shape_num = get_qcd_estimation_shape(pkls_num, bins, distribution, consider_overflow, consider_underflow, normalization_factors)
-    qcd_shape_den = get_qcd_estimation_shape(pkls_den, bins, distribution, consider_overflow, consider_underflow, normalization_factors)
+    qcd_shape_den, qcd_error_den = get_qcd_estimation_shape(pkls[qcd_ratio[1]], binning, distribution, consider_overflow, consider_underflow, normalization[qcd_ratio[1]], combined_2016 = combined_2016)
 
     if integrated:
         num_integral = np.sum(qcd_shape_num)
         den_integral = np.sum(qcd_shape_den)
         if den_integral == 0:
             raise ZeroDivisionError("QCD denominator integral is zero in transfer factor calculation.")
-        return num_integral / den_integral
 
-    # Return bin-by-bin transfer factor
-    with np.errstate(divide='ignore', invalid='ignore'):
-        TF = np.divide(qcd_shape_num, qcd_shape_den, out=np.zeros_like(qcd_shape_num), where=qcd_shape_den!=0)
+        TF = num_integral / den_integral
+        
+    else:
+        with np.errstate(divide='ignore', invalid='ignore'):
+            TF = np.divide(qcd_shape_num, qcd_shape_den, out=np.zeros_like(qcd_shape_num), where=qcd_shape_den!=0)
+            
     return TF
+"""
+def transfer_factor_qcd(
+    pkls, normalization,
+    qcd_ratio,
+    binning, distribution,
+    consider_overflow, consider_underflow,
+    integrated,
+    combined_2016
+):
+    # Numerador
+    qcd_shape_num, qcd_error_num = get_qcd_estimation_shape(
+        pkls[qcd_ratio[0]], binning, distribution,
+        consider_overflow, consider_underflow,
+        normalization[qcd_ratio[0]],
+        combined_2016 = combined_2016
+    )
 
-    #TF = qcd_shape_num / qcd_shape_den
+    # Denominador
+    qcd_shape_den, qcd_error_den = get_qcd_estimation_shape(
+        pkls[qcd_ratio[1]], binning, distribution,
+        consider_overflow, consider_underflow,
+        normalization[qcd_ratio[1]],
+        combined_2016 = combined_2016
+    )
 
-    #return TF
-    
+    if integrated:
+        num_integral = np.sum(qcd_shape_num)
+        den_integral = np.sum(qcd_shape_den)
+        num_err = np.sqrt(np.sum(qcd_error_num**2))  # combinar en cuadratura
+        den_err = np.sqrt(np.sum(qcd_error_den**2))
+
+        if den_integral == 0:
+            raise ZeroDivisionError("QCD denominator integral is zero in transfer factor calculation.")
+
+        TF = num_integral / den_integral
+
+        # Error propagation
+        rel_err2 = 0.0
+        if num_integral > 0:
+            rel_err2 += (num_err / num_integral) ** 2
+        if den_integral > 0:
+            rel_err2 += (den_err / den_integral) ** 2
+
+        TF_err = TF * np.sqrt(rel_err2)
+
+        return TF, TF_err
+
+    else:
+        with np.errstate(divide='ignore', invalid='ignore'):
+            TF = np.divide(qcd_shape_num, qcd_shape_den,
+                           out=np.zeros_like(qcd_shape_num),
+                           where=qcd_shape_den!=0)
+
+        TF_err = np.zeros_like(TF)
+
+        for i in range(len(binning)-1):
+            N, D = qcd_shape_num[i], qcd_shape_den[i]
+            dN, dD = qcd_error_num[i], qcd_error_den[i]
+
+            if D > 0 and N > 0:
+                rel_err2 = (dN/N)**2 + (dD/D)**2
+                TF_err[i] = TF[i] * np.sqrt(rel_err2)
+            else:
+                TF_err[i] = 0.0
+
+        return TF, TF_err
+
 
 def get_qcd_estimation(    
-    pkls_folder_shape: str,
-    pkls_folder_num: str,
-    pkls_folder_den: str,
+    cr_BCD_pkls,
+    cr_BCD_normalization,
+    qcd_shape,
+    qcd_ratio,
     bins: np.ndarray,
     distribution: str,
     consider_overflow: bool = True,
     consider_underflow: bool = True,
-    normalization_factors: Optional[Dict[str, float]] = None,
-    ratio_per_bin: bool = False
+    qcd_ratio_integrated: bool = False,
+    combined_2016: bool = False
 ) -> np.ndarray:
+
+    # QCD shape + error
+    qcd_shape, qcd_error_shape = get_qcd_estimation_shape(cr_BCD_pkls[qcd_shape], bins, distribution, consider_overflow, consider_underflow, cr_BCD_normalization[qcd_shape], combined_2016 = combined_2016)
+
+    # Transfer factor + error
+    qcd_TF, qcd_TF_error = transfer_factor_qcd(pkls = cr_BCD_pkls, normalization =cr_BCD_normalization,
+                                 qcd_ratio = qcd_ratio,
+                                 binning = bins, distribution = distribution, 
+                                 consider_overflow = consider_overflow, consider_underflow = consider_underflow, 
+                                 integrated = qcd_ratio_integrated,
+                                 combined_2016 = combined_2016)
+
+    # QCD estimation + error
+    qcd_estimation = qcd_shape * qcd_TF
+
+    if np.ndim(qcd_shape) == 1:  # caso binned
+        qcd_estimation_error = np.sqrt((qcd_TF * qcd_error_shape)**2 +
+                                   (qcd_shape * qcd_TF_error)**2)
+    else:  # caso integrado
+        qcd_estimation_error = np.sqrt((qcd_TF * qcd_error_shape)**2 +
+                                       (qcd_shape * qcd_TF_error)**2)
     
-    # Read pkl files:
-    pkls = load_all_pickles(pkls_folder_shape)
 
-    qcd_shape = get_qcd_estimation_shape(pkls, bins, distribution, consider_overflow, consider_underflow, normalization_factors)
-    transfer_factor =  transfer_factor_qcd(pkls_folder_num, pkls_folder_den, bins, distribution, consider_overflow, consider_underflow, normalization_factors, ratio_per_bin)
+    print(" ===================================")
+    print(f"QCD transfer factor:")
+    print(f" Valor central: {qcd_TF }")
+    print(f" Error: {qcd_TF_error}")
+    print(" ===================================")
+    #print(" QCD estimation using data-driven")
+    #print(f" Valor central {qcd_estimation}")
+    #print(f" Error: {qcd_estimation_error}")   
+    
+    
 
-    print(transfer_factor)
-    return qcd_shape * transfer_factor
+    return qcd_estimation, qcd_estimation_error

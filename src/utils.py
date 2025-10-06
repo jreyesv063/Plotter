@@ -142,10 +142,17 @@ def group_samples(sample_keys):
 
     higgs_samples = {'VBFHToWWTo2L2Nu', 'VBFHToWWToLNuQQ', 'GluGluHToWWToLNuQQ'}
     vv_samples = {'WW', 'WZ', 'ZZ'}
-    
+
     for sample in sample_keys:
-        # Skip Signal samples entirely
-        if sample.startswith("Signal"):
+        # --- Señales Tau ---
+        if sample.startswith("SignalTau_"):
+            # Extraer masa
+            parts = sample.split("_")
+            mass = parts[1]  # por ejemplo '300GeV'
+            group_name = f"SignalTau_{mass}"
+            if group_name not in groups:
+                groups[group_name] = []
+            groups[group_name].append(sample)
             continue
 
         # Remove year suffix if present
@@ -161,9 +168,9 @@ def group_samples(sample_keys):
             groups['dy'].append(sample)
         elif base_name.startswith('QCD'):
             groups['qcd'].append(sample)
-        elif base_name in higgs_samples:
+        elif any(base_name.startswith(h) for h in higgs_samples):
             groups['higgs'].append(sample)
-        elif base_name in vv_samples:
+        elif any(base_name.startswith(v) for v in vv_samples):
             groups['vv'].append(sample)
         elif base_name.startswith(("SingleElectron", "SingleMuon", "Tau", "MET")):
             groups['data'].append(sample)

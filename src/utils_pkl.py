@@ -13,6 +13,7 @@ def get_grouped_sample_paths(samples_folder: str = "2018") -> Dict[str, List[str
     """
     Groups PKL file paths by the base prefix in the filename,
     removing the .pkl extension and optional _<number> suffix.
+    Special handling for WJetsToLNu and DYJetsToLL files.
 
     Args:
         samples_folder: Directory containing the PKL files.
@@ -28,21 +29,46 @@ def get_grouped_sample_paths(samples_folder: str = "2018") -> Dict[str, List[str
 
     grouped_paths = defaultdict(list)
 
-    # Regex: matches 'sample_123.pkl' or 'sample.pkl' -> group 'sample'
-    pattern = re.compile(r"^(.*?)(?:_\d+)?\.pkl$")
-
     for filename in pkl_files:
-        match = pattern.match(filename)
-        if match:
-            prefix = match.group(1)
-            full_path = os.path.join(samples_folder, filename)
-            grouped_paths[prefix].append(full_path)
+        # Remove .pkl extension
+        base_name = filename[:-4]
+        
+        # Remove trailing _number if present
+        if '_' in base_name:
+            # Split by underscores and check if the last part is a number
+            parts = base_name.split('_')
+            if parts[-1].isdigit():
+                # Remove the number part
+                prefix = '_'.join(parts[:-1])
+            else:
+                # Keep the full name if last part is not a number
+                prefix = base_name
         else:
-            raise ValueError(f"Filename doesn't match expected pattern: {filename}")
+            prefix = base_name
+        
+        full_path = os.path.join(samples_folder, filename)
+        
+        # Special handling for WJetsToLNu files
+        if prefix.startswith("WJetsToLNu"):
+            # Check if it's an HT-binned sample (contains "HT-")
+            if "HT-" in prefix:
+                # Keep HT-binned samples as they are
+                grouped_paths[prefix].append(full_path)
+            else:
+                # Group all non-HT WJetsToLNu samples (ext, inclusive) under "WJetsToLNu_inclusive"
+                grouped_paths["WJetsToLNu_inclusive"].append(full_path)
+        
+        # Special handling for DYJetsToLL_M-50 files
+        elif prefix.startswith("DYJetsToLL_M-50"):
+            # Group all DYJetsToLL_M-50 samples (ext, inclusive) under "DYJetsToLL_M-50_inclusive"
+            grouped_paths["DYJetsToLL_M-50_inclusive"].append(full_path)
+        
+        else:
+            # For all other files, use the original prefix
+            grouped_paths[prefix].append(full_path)
     
     return dict(grouped_paths)
 
-    
 
 def remove_corrupted_pkl_files(grouped_paths: Dict[str, List[str]]) -> Dict[str, List[str]]:
     """
@@ -66,7 +92,6 @@ def remove_corrupted_pkl_files(grouped_paths: Dict[str, List[str]]) -> Dict[str,
     return dict(cleaned_paths)
 
 
-
 def extract_variation_groups(keys: List[str]) -> Dict[str, List[str]]:
     grouped = defaultdict(list)
     for key in keys:
@@ -77,8 +102,6 @@ def extract_variation_groups(keys: List[str]) -> Dict[str, List[str]]:
             base = key[:-4]
             grouped[base].append(key)
     return dict(grouped)
-
-    
 
 
 def extract_and_save_per_prefix(
@@ -173,7 +196,6 @@ def extract_and_save_per_prefix(
 
         del concatenated
         gc.collect()
-        
 
 
 def load_pkl_files(samples_folder: str = "2018") -> Dict[str, Dict[str, Any]]:
@@ -200,9 +222,7 @@ def load_pkl_files(samples_folder: str = "2018") -> Dict[str, Dict[str, Any]]:
     clean_grouped = remove_corrupted_pkl_files(grouped)
     extract_and_save_per_prefix(clean_grouped, output_merged_folder)
     
-
     gc.collect()
-
     
     
     

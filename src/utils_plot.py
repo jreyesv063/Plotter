@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 from typing import Dict, Any, Optional, List, Union, Tuple
 
 from src.intervals import  poisson_interval_v2
+from src.utils_errors import calc_bin_eff_error
 
 def get_hist(
     feature: str,
@@ -112,10 +113,16 @@ class HistogramPlotter:
             "st": "#8B008B",              # Dark Magenta
             "higgs": "#FFFF00",           # Yellow
             "qcd": "#ffc0cb",             # Pink
-            "SignalTau_600GeV": "green",
-            "SignalTau_1TeV": "blue",
-            "SignalTau_2TeV": "red",
-            "SignalTau_3TeV": "orange",
+
+            # Señales: colores distintos y contrastantes
+            "SignalTau_300GeV": "#00CED1",  # DarkTurquoise
+            "SignalTau_400GeV": "#9400D3",  # DarkViolet
+            "SignalTau_600GeV": "#FF4500",  # OrangeRed
+            "SignalTau_750GeV": "#1E90FF",  # DodgerBlue
+            "SignalTau_1000GeV": "#32CD32", # LimeGreen
+            "SignalTau_1500GeV": "#FFD700", # Gold
+            "SignalTau_2000GeV": "#FF69B4", # HotPink
+            "SignalTau_3000GeV": "#00FA9A", # MediumSpringGreen
         }
 
     def init_label_map(self) -> Dict[str, Dict[str, str]]:
@@ -142,8 +149,10 @@ class HistogramPlotter:
             "mu": {
                 "jet_pt": r"$p_T$(jet) [GeV]",
                 "bjet_pt": r"$p_T$(bjet$_{0}$) [GeV]",
-                "jet_eta": r"$\eta$(b-Jet$_{0}$)",
-                "jet_phi": r"$\phi$(b-Jet$_{0}$)",
+                "bjet_phi": "$\phi(bjets)$",             
+                "bjet_eta": r"$\eta$(bjets)",                   
+                "jet_eta": r"$\eta$(Jet$_{0}$)",
+                "jet_phi": r"$\phi$(Jet$_{0}$)",
                 "met": r"$p_T^{miss}$ [GeV]",
                 "met_pt_nomu":  r"$p_T^{miss}(\mu)$ [GeV]",
                 "pt_nomu_minus": r"$p_T^{miss}(\mu)$ [GeV]",
@@ -181,7 +190,15 @@ class HistogramPlotter:
 
                 "HT": "HT [GeV]",
                 "Z_gen_pt": "Z(gen-level) [GeV]",
-                "Z_gen_num": "n[Z(gen-level)]"
+                "Z_gen_num": "n[Z(gen-level)]",
+
+                "ST_met": r"$ST(\mu, j, f, p_{T}^{miss})$",
+                "ST": r"$ST(\mu, j, f)$",    
+                "ST_full": r"$ST(e, \mu, \tau, j, f, p_{T}^{miss})$",       
+
+                "recoil_phi":  r"$\phi(p_T^{miss}(recoil))$",     
+                "njets_no_top_tagger": r"$N(jets-no top)$",     
+                "njets_full":  r"$N(j + f + b)$",                 
                 
             },
           "tau": {
@@ -204,6 +221,7 @@ class HistogramPlotter:
                 "lepton_bjet_mass": r"$m(\tau, $b-Jet$_{0})$ [GeV]",
                 "lepton_bjet_dr": r"$\Delta R$($\tau$, b-Jet$_{0}$)",
                 "lepton_met_mass": r"$m_T$($\tau$, $p_T^{miss}$) [GeV]",
+                "lepton_met_phi": r"$\Delta \phi(\tau, p_T^{miss})$",
                 "lepton_met_delta_phi": r"|$\Delta \phi(\tau, p_T^{miss})$|",
                 "lepton_met_abs_delta_phi": r"$|\Delta \phi(\tau, p_T^{miss})|$",
                 "lepton_met_bjet_mass": r"$m_T^{tot}(\tau, $b-Jet$_{0}, p_T^{miss})$ [GeV]",
@@ -253,9 +271,10 @@ class HistogramPlotter:
             "SignalTau_400GeV": r"Signal ($m_{\tau}$=400 GeV)",               
             "SignalTau_600GeV": r"Signal ($m_{\tau}$=600 GeV)",
             "SignalTau_750GeV": r"Signal ($m_{\tau}$=750 GeV)",               
-            "SignalTau_1TeV": r"Signal ($m_{\tau}$=1 TeV)",
-            "SignalTau_2TeV": r"Signal ($m_{\tau}$=2 TeV)",
-            "SignalTau_3TeV": r"Signal ($m_{\tau}$=3 TeV)",
+            "SignalTau_1000GeV": r"Signal ($m_{\tau}$=1.0 TeV)",
+            "SignalTau_1500GeV": r"Signal ($m_{\tau}$=1.5 TeV)",
+            "SignalTau_2000GeV": r"Signal ($m_{\tau}$=2.0 TeV)",
+            "SignalTau_3000GeV": r"Signal ($m_{\tau}$=3.0 TeV)",
             "SingleMuon": "Data",
             "SingleElectron": "Data",
             "SingleTau": "Data",
@@ -274,7 +293,11 @@ class HistogramPlotter:
         cms_loc: float,
         y_axis_range: tuple,
         ratio_axis_range: tuple,
-        signals: bool
+        signals: bool,
+        denominator,
+        include_systematics,
+        systematics,
+        qcd_estimation_error
     ) -> Tuple[Optional[np.ndarray], Optional[np.ndarray]]:
         """
         Main plotting method that orchestrates the full plotting workflow.
@@ -288,6 +311,8 @@ class HistogramPlotter:
         Returns:
             Tuple containing (total_mc, total_main_background) histograms
         """
+   
+        
         # Store configuration
         self.grouped_histos = grouped_histos
         self.binning = np.array(binning)
@@ -301,6 +326,19 @@ class HistogramPlotter:
         self.signals = signals
         self.cms_loc = cms_loc
         self.events_gev = events_gev
+        self.qcd_estimation_error = qcd_estimation_error
+
+        self.include_systematics = include_systematics
+        if self.include_systematics:
+            self.systematics = systematics
+
+        # Denominator to calculate the stadistical error
+        rename_map = {
+            "DrellYan+jets": "DYJetsToLL",
+            "W+jets": "WJetsToLNu",
+        }
+        
+        self.denominator = denominator.iloc[0].rename(index=rename_map)
 
         if self.events_gev:
             self.bin_widths = self.binning[1:] - self.binning[:-1]
@@ -443,7 +481,7 @@ class HistogramPlotter:
         else:
             ax = self.axes
             ax_ratio = None
-
+    
         sample_map = {
             "tt": "tt",
             "dy": "DYJetsToLL",
@@ -453,45 +491,132 @@ class HistogramPlotter:
             "higgs": "Higgs",
             "qcd": "QCD",
         }
-
-           
     
-        # Definir las claves a excluir del stack
-        #exclude_keys = ["data"] + [f"SignalTau_{m}GeV" for m in [600, 1000, 2000, 3000]]
+        # Excluir Data y Señales del stack
         exclude_keys = ["data"] + [key for key in self.grouped_histos if key.startswith("Signal")]
-
-        # Filter MC samples: exclude Data and Signal, and keep only those with non-None histograms
-        mc_samples_unsorted = [s for s in self.grouped_histos if s not in exclude_keys and self.grouped_histos[s] is not None]
+    
+        # Filtrar MC válidos
+        mc_samples_unsorted = [
+            s for s in self.grouped_histos
+            if s not in exclude_keys and self.grouped_histos[s] is not None
+        ]
         
-        # Compute integral (total sum of events) for each MC sample
+        # Ordenar por integral
         sample_integrals = {s: self.grouped_histos[s].sum() for s in mc_samples_unsorted}
-        
-        # Sort MC samples by their integral in ascending order
-        # This means samples with fewer events are plotted first (at the bottom of the stack),
-        # and samples with more events are plotted last (on top of the stack)
         mc_samples = sorted(sample_integrals, key=sample_integrals.get)
         
-        # Extract the histograms and their corresponding colors in the sorted order
+        # Preparar histos y colores
         stacked_histos = [self.grouped_histos[s] for s in mc_samples]
         colors = [self.sample_colors[s] for s in mc_samples]
+    
+        # -------------------------------------
+        # Estadístico: error de MC
+        # -------------------------------------
+        mapped_denominator_sumw = {}
+        for short, long in sample_map.items():
+            if long in self.denominator:
+                mapped_denominator_sumw[short] = self.denominator[long]
+            elif short == "qcd":
+                # Preliminar version
+                data_val = self.denominator.get("Data (MET)", 0.0)
+                total_val = self.denominator.get("Total", 0.0)
+                mapped_denominator_sumw[short] = abs(data_val - total_val)
+            else:
+                mapped_denominator_sumw[short] = 0.0
+    
+        self.stat_errors = {"bkg": None}
+        for sample, hist in self.grouped_histos.items():
+            if sample == "data":
+                continue
+            denom = mapped_denominator_sumw.get(sample, 0.0)
+            eff_err = [calc_bin_eff_error(num, denom) for num in hist]
 
+               
+            tot_err = [denom * de for de in eff_err]
 
-        # Sum all MC histograms bin by bin
+            if sample == "qcd" and self.qcd_estimation_error is not None and len(self.qcd_estimation_error) > 0:
+                self.stat_errors[sample] = self.qcd_estimation_error
+            else:
+                self.stat_errors[sample] = np.array(tot_err)
+                
+            if self.stat_errors["bkg"] is None:
+                self.stat_errors["bkg"] = np.array(tot_err) ** 2
+            else:
+                self.stat_errors["bkg"] += np.array(tot_err) ** 2
+        self.stat_errors["bkg"] = np.sqrt(self.stat_errors["bkg"])
+    
+        # --------------------------------------
+        # Total MC y errores
+        # --------------------------------------
         total_mc = np.sum(stacked_histos, axis=0)
-        if self.is_signal == False:
-            data = self.grouped_histos["data"]
-            
         bin_centers = 0.5 * (self.binning[1:] + self.binning[:-1])
-
-        # mc error stat
-        stat_bgr_error_down, stat_bgr_error_up = poisson_interval_v2(
-            values=total_mc, conf_level=0.95
-        )        
-
-        total_bgr_error_down = stat_bgr_error_down
-        total_bgr_error_up = stat_bgr_error_up
+        # Stadistical error       
+        stat_bgr_error_down, stat_bgr_error_up = np.subtract(total_mc,self.stat_errors["bkg"]) , np.add(total_mc,self.stat_errors["bkg"])
         
-        # Scale MC for events/GeV if applicable
+        if self.include_systematics:
+            syst_total_bgr = {}
+        
+            for process, (_, df_total) in self.systematics.items():
+                # df_total es el segundo DataFrame de la tupla
+                if "Total" in df_total.index:
+                    syst_total_bgr[process] = df_total.loc["Total"]
+        
+            syst_bgr_error_up = {}
+            syst_bgr_error_down = {}
+            
+            for process, series in syst_total_bgr.items():
+                up_vals, down_vals = [], []
+            
+                for key in series.index:
+                    if key.endswith("_nominal") and not key.startswith("Total"):
+                        bin_prefix = key.replace("_nominal", "")
+        
+                        up = series[f"{bin_prefix}_|Nom-Up|"]
+                        down = series[f"{bin_prefix}_|Nom-Down|"]
+        
+                        up_vals.append(up)
+                        down_vals.append(down)
+        
+                syst_bgr_error_up[process] = up_vals
+                syst_bgr_error_down[process] = down_vals
+        
+            # --- Calcular total en cuadratura ---
+            # Número de bins = longitud de cualquier proceso
+            n_bins = len(next(iter(syst_bgr_error_up.values())))
+            up_total, down_total = [], []
+        
+            for i in range(n_bins):
+                up_sq = sum((syst_bgr_error_up[p][i])**2 for p in syst_bgr_error_up)
+                down_sq = sum((syst_bgr_error_down[p][i])**2 for p in syst_bgr_error_down)
+                up_total.append(np.sqrt(up_sq))
+                down_total.append(np.sqrt(down_sq))
+        
+            syst_bgr_error_up["total"] = up_total
+            syst_bgr_error_down["total"] = down_total
+
+            # ============================================
+            # COmbinación estadisticos + systematicos
+            # ============================================
+            
+            # Estadisticos
+            stat_err_up = stat_bgr_error_up - total_mc
+            stat_err_down = total_mc - stat_bgr_error_down
+
+            # Systematicos
+            syst_up_total = syst_bgr_error_up["total"]
+            syst_down_total = syst_bgr_error_up["total"]
+            
+            total_err_up = np.sqrt(stat_err_up**2 + np.array(syst_up_total)**2)
+            total_err_down = np.sqrt(stat_err_down**2 + np.array(syst_down_total)**2)
+            
+            total_bgr_error_up = total_mc + total_err_up
+            total_bgr_error_down = total_mc - total_err_down
+
+
+        else:
+            total_bgr_error_down, total_bgr_error_up = stat_bgr_error_down, stat_bgr_error_up
+
+        
         if self.events_gev:
             scaled_stacked = stacked_histos / self.bin_widths
             error_down = total_bgr_error_down / self.bin_widths
@@ -500,8 +625,8 @@ class HistogramPlotter:
             scaled_stacked = stacked_histos
             error_down = total_bgr_error_down
             error_up = total_bgr_error_up
-        
-        # Draw MC stack (if available)
+    
+        # --- Dibujar MC stack ---
         ax.tick_params(axis='both', labelsize=14)
         hep.histplot(
             scaled_stacked,
@@ -514,123 +639,105 @@ class HistogramPlotter:
             linewidth=0.7,
             label=[sample_map.get(s, s) for s in mc_samples]
         )
-        
-        # Draw MC error bar
+    
+        # --- Error MC ---
         error_down_step = np.repeat(error_down, 2)
         error_up_step = np.repeat(error_up, 2)
         bin_edges_step = np.repeat(self.binning, 2)[1:-1]
+
+        if self.include_systematics:
+            error_label = "stat + syst"
+        else:
+            error_label = "stat"
+            
         ax.fill_between(
             bin_edges_step,
             error_down_step,
             error_up_step,
-            step=None,
             color="lightgray",
             alpha=0.5,
             edgecolor="black",
             hatch="///",
             linewidth=0,
-            label="stat unc"
+            label=f"{error_label} unc"
         )
-        
-        # Draw Data only if it is not a signal
-        if "data" in self.grouped_histos and self.grouped_histos["data"] is not None and not self.is_signal:
+    
+        # --- Data (si existe) ---
+        if "data" in self.grouped_histos and self.grouped_histos["data"] is not None:
+            data = self.grouped_histos["data"]
             if self.events_gev:
-                scaled_data = self.grouped_histos["data"] / self.bin_widths
-                scaled_errors = np.sqrt(self.grouped_histos["data"]) / self.bin_widths
+                scaled_data = data / self.bin_widths
+                scaled_errors = np.sqrt(data) / self.bin_widths
             else:
-                scaled_data = self.grouped_histos["data"]
-                scaled_errors = np.sqrt(self.grouped_histos["data"])
-
+                scaled_data = data
+                scaled_errors = np.sqrt(data)
+    
             bin_centers = (self.binning[:-1] + self.binning[1:]) / 2
             bin_widths = (self.binning[1:] - self.binning[:-1]) / 2
-
             ax.errorbar(
                 bin_centers,
                 scaled_data,
                 xerr=bin_widths,
                 yerr=scaled_errors,
-                fmt='k.',            # black point
+                fmt='k.',
                 markersize=10,
                 linestyle='none',
-                capsize=0,           # no caps
+                capsize=0,
                 label="Data"
             )
-
     
-        # Draw signal if enabled
-        if self.is_signal or self.signals:
-            for signal_key in sorted(k for k in self.grouped_histos if k.startswith("SignalTau_")):
-                signal_hist = self.grouped_histos[signal_key]
-                
-                if signal_hist is None:
-                    continue
-
-                # Normalize to Events/GeV if needed
-                if self.events_gev:
-                    signal_hist = signal_hist / self.bin_widths  
-        
-                hep.histplot(
-                    signal_hist,
-                    bins=self.binning,
-                    ax=ax,
-                    histtype="step",
-                    color=self.sample_colors.get(signal_key, "r"),  # fallback to red if not in dict
-                    linestyle="--",
-                    linewidth=2,
-                    label=self.sample_map.get(signal_key, signal_key)
-                )
-
-            ax.set_xlabel(f"{self.label_map[self.lepton_flavor][self.feature]}", fontsize = 16)
-        
-                    
+        # --- Señales (si existen) ---
+        signal_keys = [k for k in self.grouped_histos if k.startswith("SignalTau_")]
+        for signal_key in sorted(signal_keys):
+            signal_hist = self.grouped_histos[signal_key]
+            if signal_hist is None:
+                continue
+            if self.events_gev:
+                signal_hist = signal_hist / self.bin_widths
+            hep.histplot(
+                signal_hist,
+                bins=self.binning,
+                ax=ax,
+                histtype="step",
+                color=self.sample_colors.get(signal_key, "r"),
+                linestyle="--",
+                linewidth=2,
+                label=self.sample_map.get(signal_key, signal_key)
+            )
     
+        # --- Estilo ---
+        ax.set_xlabel(f"{self.label_map[self.lepton_flavor][self.feature]}", fontsize=16)
         ax.set_ylabel("Events/GeV" if self.events_gev else "Events", fontsize=16)
         ax.set_yscale("log" if self.log_scale else "linear")
         ax.set_ylim(self.y_axis_range)
-        ax.legend()
-
         ax.legend(
-            loc="upper center",       #  Centered above
-            bbox_to_anchor=(0.5, 1.02), 
-            ncol=3,                   # Number of columns
+            loc="upper center",
+            bbox_to_anchor=(0.5, 1.02),
+            ncol=3,
             fontsize=12,
             frameon=False
         )
-
-        # Ratio plot
+    
+        # --- Ratio Data/MC (si hay Data) ---
         if ax_ratio is not None and "data" in self.grouped_histos and self.grouped_histos["data"] is not None:
-
-            ax_ratio.tick_params(axis='both', labelsize=14)
-            
-            # Avoid division by zero
-            ratio = np.divide(data, total_mc)
-
-            # Error band only reflects the mc error.
-            error_mc_down_ratio = (total_mc -  total_bgr_error_down)/total_mc
-            error_mc_up_ratio = (total_bgr_error_up - total_mc)/total_mc
-
-            # Vertical lines in the black point only reflects the data error.
-            error_data_down = np.sqrt(data)/data
-            error_data_up = np.sqrt(data)/data
-
+            ratio = np.divide(data, total_mc, out=np.zeros_like(data, dtype=float), where=total_mc != 0)
+            error_mc_down_ratio = (total_mc - total_bgr_error_down) / total_mc
+            error_mc_up_ratio = (total_bgr_error_up - total_mc) / total_mc
+            error_data_down = np.sqrt(data) / data
+            error_data_up = np.sqrt(data) / data
             yerr = np.vstack([error_data_down, error_data_up])
-
-            #print(error_mc_down_ratio,  error_mc_up_ratio)
-            
-
+    
             bin_centers = (self.binning[:-1] + self.binning[1:]) / 2
-            bin_widths = (self.binning[1:] - self.binning[:-1]) / 2  # half-widths for x error
-            
+            bin_widths = (self.binning[1:] - self.binning[:-1]) / 2
             ax_ratio.errorbar(
                 bin_centers,
                 ratio,
-                xerr=bin_widths,  # Add this line
+                xerr=bin_widths,
                 yerr=yerr,
                 fmt='ko',
                 markersize=5,
                 capsize=0
-            )            
-
+            )
             ax_ratio.fill_between(
                 self.binning,
                 np.append(1 - error_mc_down_ratio, 1 - error_mc_down_ratio[-1]),
@@ -645,12 +752,17 @@ class HistogramPlotter:
             )
             ax_ratio.axhline(1, color='k', linestyle='--')
             ax_ratio.set_ylabel("Data / Total bgr", fontsize=15)
-            ax_ratio.set_xlabel(f"{self.label_map[self.lepton_flavor][self.feature]}", fontsize = 16)
+            ax_ratio.set_xlabel(f"{self.label_map[self.lepton_flavor][self.feature]}", fontsize=16)
             ax_ratio.set_ylim(self.ratio_axis_range)
             ax_ratio.grid(True)
-          
 
-    
+          
+    # --------------------------------
+    #  Systematic error
+    # --------------------------------
+    def errors_plot(self):
+        return self.stat_errors
+        
     # --------------------------------
     #   Save pdf file
     # --------------------------------

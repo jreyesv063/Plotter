@@ -75,19 +75,16 @@ def build_efficiency_table_from_fit(group_num, group_den, binning, main_back, fi
     import pandas as pd
     from scipy.special import erf
 
-    def get_eff(num, den):
-        return np.divide(num, den, out=np.full_like(num, np.nan, dtype=float), where=den != 0)
+    def eff_and_var_from_counts(n, d):
+        #Devuelve (eff, var_eff) con tratamiento seguro de d==0.
+        eff = np.divide(n, d, out=np.full_like(n, np.nan, dtype=float), where=d != 0)
+        var = np.zeros_like(eff, dtype=float)
+        mask = (d > 0) & (eff >= 0) & (eff <= 1)
+        var[mask] = eff[mask] * (1.0 - eff[mask]) / d[mask]
+        return eff, var
 
     def safe_divide(n1, n2):
         return np.divide(n1, n2, out=np.full_like(n1, np.nan, dtype=float), where=n2 != 0)
-
-    def calculate_binomial_uncertainty(num, den):
-        """Calcula incertidumbre binomial con cuidado para divisiones por cero"""
-        eff = get_eff(num, den)
-        mask = (den > 0) & (eff > 0) & (eff < 1)
-        inc = np.zeros_like(eff)
-        inc[mask] = np.sqrt(eff[mask] * (1 - eff[mask]) / den[mask])
-        return inc
 
     # --- Samples ---
     all_samples = set(group_num.keys()) & set(group_den.keys())
@@ -101,57 +98,45 @@ def build_efficiency_table_from_fit(group_num, group_den, binning, main_back, fi
     # --- Data ---
     data_num = group_num["data"]
     data_den = group_den["data"]
-    eff_data = get_eff(data_num, data_den)
-    eff_inc_data = calculate_binomial_uncertainty(data_num, data_den)
+    eff_data, var_data = eff_and_var_from_counts(data_num, data_den)
 
     # --- Main background ---
     main_num = group_num[main_back]
     main_den = group_den[main_back]
-    eff_main = get_eff(main_num, main_den)
-    eff_inc_main = calculate_binomial_uncertainty(main_num, main_den)
+    eff_main, var_main = eff_and_var_from_counts(main_num, main_den)
 
     # --- Total MC ---
     mc_num = sum(group_num[s] for s in mc_samples)
     mc_den = sum(group_den[s] for s in mc_samples)
-    eff_mc = get_eff(mc_num, mc_den)
-    eff_inc_mc = calculate_binomial_uncertainty(mc_num, mc_den)
+    eff_mc, var_mc = eff_and_var_from_counts(mc_num, mc_den)
 
-    # --- ENFOQUE ROBUSTO para cálculo de pesos ---
+    # --- Otros fondos ---
     other_bkgs = [s for s in mc_samples if s != main_back]
     other_num = sum(group_num[s] for s in other_bkgs)
     other_den = sum(group_den[s] for s in other_bkgs)
-    
-    # Calcular eff_diff con cuidado con denominadores cero
+    eff_other, var_other = eff_and_var_from_counts(other_num, other_den)
+
+    # --- Eficiencia "Data - Otros" usando CONTEOS ---
     diff_num = data_num - other_num
     diff_den = data_den - other_den
-    eff_diff = get_eff(diff_num, diff_den)
-    
-    # Calcular incertidumbre para eff_diff (propagación más cuidadosa)
-    var_data = (data_num * (data_den - data_num)) / np.where(data_den > 0, data_den**3, 1)
-    var_other = (other_num * (other_den - other_num)) / np.where(other_den > 0, other_den**3, 1)
-    eff_diff_inc = np.sqrt(var_data + var_other)
-    
-    # Peso central
-    weights = safe_divide(eff_diff, eff_main)
+    eff_diff, var_diff = eff_and_var_from_counts(diff_num, diff_den)
 
-    # --- Propagación de error MEJORADA ---
-    # Para weight = eff_diff / eff_main
+    # Enforce límites físicos
+    eff_diff = np.clip(eff_diff, 0.0, 1.0)
+
+    # --- Pesos y propagación ---
     with np.errstate(divide='ignore', invalid='ignore'):
-        term1 = (eff_diff_inc**2) / (eff_main**2)
-        term2 = (eff_diff**2 * eff_inc_main**2) / (eff_main**4)
-        sigma_w = np.sqrt(term1 + term2)
-    
-    # Manejar casos especiales
+        weights = safe_divide(eff_diff, eff_main)
+        term1 = np.divide(var_diff, eff_main**2, out=np.zeros_like(var_diff), where=eff_main != 0)
+        term2 = np.divide((eff_diff**2) * var_main, eff_main**4,
+                          out=np.zeros_like(var_main), where=eff_main != 0)
+        sigma_w = np.sqrt(np.maximum(0.0, term1 + term2))
+
     sigma_w = np.nan_to_num(sigma_w, nan=0.0, posinf=0.0, neginf=0.0)
     weights = np.nan_to_num(weights, nan=0.0, posinf=5.0, neginf=0.0)
 
-    # Variaciones sin límites artificiales estrictos
-    weight_up = weights + sigma_w
-    weight_down = weights - sigma_w
-    
-    # Solo límites físicos razonables
-    weight_up = np.clip(weight_up, 0.0, 5.0)    # Máximo 5.0 para ver variaciones
-    weight_down = np.clip(weight_down, 0.0, 5.0)
+    weight_up = np.clip(weights + sigma_w, 0.0, 5.0)
+    weight_down = np.clip(weights - sigma_w, 0.0, 5.0)
 
     # --- Binning ---
     x_binning = [(binning[i] + binning[i+1]) / 2 for i in range(len(binning) - 1)]
@@ -168,20 +153,28 @@ def build_efficiency_table_from_fit(group_num, group_den, binning, main_back, fi
     df = pd.DataFrame({
         "bin_range": bin_ranges,
         "bin_center": x_binning,
-        "eff_data": np.round(eff_data, 4),        # 4 decimales para ver mejor
-        "eff_main": np.round(eff_main, 4),
-        "eff_total_mc": np.round(eff_mc, 4),
-        "eff_diff": np.round(eff_diff, 4),
-        "weight": np.round(weights, 4),
-        "weight_up": np.round(weight_up, 4),
-        "weight_down": np.round(weight_down, 4),
-        "sigma_w": np.round(sigma_w, 6),          # 6 decimales para ver la incertidumbre
-        "eff_inc_data": np.round(eff_inc_data, 6),
-        "eff_inc_main": np.round(eff_inc_main, 6),
-        "eff_diff_inc": np.round(eff_diff_inc, 6),
+        "eff_data": np.round(eff_data, 3),
+        "eff_main": np.round(eff_main, 3),
+        "eff_total_mc": np.round(eff_mc, 3),
+        "eff_other": np.round(eff_other, 3),
+        "eff_diff": np.round(eff_diff, 3),
+        "weight": np.round(weights, 3),
+        "weight_up": np.round(weight_up, 3),
+        "weight_down": np.round(weight_down, 3),
+        "sigma_w": np.round(sigma_w, 3),
+        "eff_inc_data": np.round(np.sqrt(var_data), 3),
+        "eff_inc_main": np.round(np.sqrt(var_main), 3),
+        "eff_diff_inc": np.round(np.sqrt(var_diff), 3),
     })
 
+    # Redondear valores numéricos a tres decimales y formatear como texto
+    for col in df.columns:
+        if df[col].dtype in [np.float64, np.float32]:
+            df[col] = df[col].map(lambda x: f"{x:.3f}")
+            
     return df
+
+
 
 
 # ---------------- Run Efficiency Curve ---------------- #

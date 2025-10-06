@@ -51,7 +51,7 @@ def calc_bayes_eff_error(numerator: float, denominator: float) -> float:
 
 def calc_bin_eff_error(numerator: float, denominator: float) -> float:
     if denominator > 0:
-        efficiency = numerator / denominator
+        efficiency = abs(numerator / denominator)
         efferror = math.sqrt(efficiency * (1.0 - efficiency) / denominator)
         return efferror
     else:
@@ -149,6 +149,8 @@ def compute_eff_cutflow(cutflow_table, normalization):
     scaled_error_df = scaled_error_df.reindex(index=cutflow_table.index)
 
     return result_map, scaled_error_df
+
+
 
 def compute_statistical_error(numerator: float, denominator: float) -> float:
     """

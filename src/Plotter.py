@@ -15,7 +15,7 @@ from src.utils_plot import get_hist, HistogramPlotter
 from src.utils_errors import get_table_cutflow_unscaled, compute_eff_cutflow 
 from src.utils_plot_2D import get_group_hist2d, plot_2d_hist, get_binning_table 
 from src.utils_qcd import QCD_squema_plot, qcd_estimation, get_qcd_estimation, get_qcd_estimation_shape
-from src.utils_systematic_variations import load_systematic_variations, load_systematic_variation_per_bgr
+from src.utils_systematic_variations import load_systematic_variations, load_systematic_variation_per_bgr, process_systematics_table, systematic_error_table_report
 from src.utils import ensure_directory, load_all_pickles, load_all_jsons, get_weights, group_samples, get_rename_map
 
 
@@ -49,6 +49,7 @@ class Plotter:
         # Signal samples
         is_SR: bool = False,
         signal_superposition: bool = False,
+        include_signal_samples: bool = False,
 
         # QCD estimation
         applied_data_driven: bool = False,
@@ -71,6 +72,8 @@ class Plotter:
 
         
         self.stadistical_error_using = stadistical_error_using
+        self.systematic_error = systematic_error
+
 
         self.signal = is_SR 
         self.signal_superposition = signal_superposition
@@ -113,6 +116,7 @@ class Plotter:
         try:
             with open("jsons/DAS_xsec.json") as f:
                 xsecs = json.load(f)
+
         
             with open("jsons/luminosity.json") as f:
                 luminosity = json.load(f)
@@ -228,62 +232,112 @@ class Plotter:
         # ------------------------------------------------        
         if self.combined_2016:
 
-            base_folder = os.path.dirname(samples_folder.rstrip("/"))            
-            samples_folder_2016 = os.path.join(base_folder, "2016")
-            samples_folder_2016APV = os.path.join(base_folder, "2016APV")
+            base_folder = os.path.dirname(samples_folder.rstrip("/"))
+
+            periods = {
+                "2016": {
+                    "folder": os.path.join(base_folder, "2016"),
+                    "lumi": lumi_2016
+                },
+                "2016APV": {
+                    "folder": os.path.join(base_folder, "2016APV"),
+                    "lumi": lumi_2016APV
+                }
+            }
+
+            self.pkl_map = {}
+            self.json_map = {}
+            self.normalization = {}
+            self.sumw = {}
+
+
+            for suffix, info in periods.items():
+                pkl_folder = os.path.join(info["folder"], "summary", "pkl")
+                json_folder = os.path.join(info["folder"], "summary", "metadata")
         
-            pkl_folder_2016APV = os.path.join(samples_folder_2016APV, "summary", "pkl")
-            json_folder_2016APV = os.path.join(samples_folder_2016APV, "summary", "metadata")
-            
-            pkl_folder_2016 = os.path.join(samples_folder_2016, "summary", "pkl")
-            json_folder_2016 = os.path.join(samples_folder_2016, "summary", "metadata")
-
-
-            print(f" Reading pkl files for 2016APV from: {pkl_folder_2016APV}, and 2016 from  {pkl_folder_2016}")
-            pkl_map_2016APV = load_all_pickles(pkl_folder_2016APV)
-            json_map_2016APV = load_all_jsons(json_folder_2016APV)
-            normalization_2016APV, sumw_2016APV = get_weights(luminosity = lumi_2016APV, xsecs = xsecs, pkls = pkl_map_2016APV, jsons = json_map_2016APV, normalized_to = normalized_to)
-
-
-
-            print(f"\n Reading json files for 2016APV from: {json_folder_2016APV}, and 2016 from {json_folder_2016}")
-
-            
-            pkl_map_2016 = load_all_pickles(pkl_folder_2016)
-            json_map_2016 = load_all_jsons(json_folder_2016)
-            normalization_2016, sumw_2016 = get_weights(luminosity = lumi_2016, xsecs = xsecs, pkls = pkl_map_2016, jsons = json_map_2016, normalized_to = normalized_to)
-
-
-            # ---- Combined_map                
-            self.pkl_map = {
-                f"{k}_2016": v for k, v in pkl_map_2016.items()
-            }
-            self.pkl_map.update({
-                f"{k}_2016APV": v for k, v in pkl_map_2016APV.items()
-            })
-
-            self.json_map = {
-                f"{k}_2016": v for k, v in json_map_2016.items()
-            }
-            self.json_map.update({
-                f"{k}_2016APV": v for k, v in json_map_2016APV.items()
-            })
+                print(f"Reading files for {suffix}: pkl -> {pkl_folder}, json -> {json_folder}")
         
-            self.normalization = {
-                f"{k}_2016": v for k, v in normalization_2016.items()
-            }
-            self.normalization.update({
-                f"{k}_2016APV": v for k, v in normalization_2016APV.items()
-            })
+                pkl_map = load_all_pickles(pkl_folder)
+                json_map = load_all_jsons(json_folder)
+                normalization, sumw = get_weights(
+                    luminosity=info["lumi"],
+                    xsecs=xsecs,
+                    pkls=pkl_map,
+                    jsons=json_map,
+                    normalized_to=normalized_to
+                )
+        
+                # Agregar sufijo a las claves y combinar
+                self.pkl_map.update({f"{k}_{suffix}": v for k, v in pkl_map.items()})
+                self.json_map.update({f"{k}_{suffix}": v for k, v in json_map.items()})
+                self.normalization.update({f"{k}_{suffix}": v for k, v in normalization.items()})
+                self.sumw.update({f"{k}_{suffix}": v for k, v in sumw.items()})
+
             
+            if self.applied_data_driven:
+                # --- Diccionarios de CR ---
+                cr_folders = {
+                    "cr_b": self.cr_B_folder,
+                    "cr_c": self.cr_C_folder,
+                    "cr_d": self.cr_D_folder
+                }
             
-            self.sumw = {
-                f"{k}_2016": v for k, v in sumw_2016.items()
-            }
-            self.sumw.update({
-                f"{k}_2016APV": v for k, v in sumw_2016APV.items()
-            })
+                # --- Inicializar resultados ---
+                self.pkl_files_qcd = {}
+                self.json_files_qcd = {}
+                self.normalizations_qcd = {}
+                self.sumws_qcd = {}
             
+                # --- Periodos ---
+                periods = {
+                    "2016": {"lumi": lumi_2016},
+                    "2016APV": {"lumi": lumi_2016APV}
+                }
+            
+                # --- Iterar sobre cada CR ---
+                for cr_name, cr_folder in cr_folders.items():
+                    # --- Quitar el año precargado ---
+                    cr_base_folder = os.path.dirname(cr_folder.rstrip("/"))
+            
+                    self.pkl_files_qcd[cr_name] = {}
+                    self.json_files_qcd[cr_name] = {}
+                    self.normalizations_qcd[cr_name] = {}
+                    self.sumws_qcd[cr_name] = {}
+            
+                    for suffix, info in periods.items():
+                        # --- Carpeta específica del CR y periodo ---
+                        folder = os.path.join(cr_base_folder, suffix)
+                        pkl_folder = os.path.join(folder, "summary", "pkl")
+                        json_folder = os.path.join(folder, "summary", "metadata")
+            
+                        # --- Cargar archivos ---
+                        pkls = load_all_pickles(pkl_folder)
+                        jsons = load_all_jsons(json_folder)
+            
+                        # --- Separar Data/MET de MC ---
+                        data_keys = [k for k in pkls.keys() if k.lower() in ["met", "data", "met_merged"]]
+                        mc_keys = [k for k in pkls.keys() if k not in data_keys]
+            
+                        # --- Normalización MC ---
+                        mc_norm, mc_sumw = get_weights(
+                            luminosity=info["lumi"],
+                            xsecs=xsecs,
+                            pkls={k: pkls[k] for k in mc_keys},
+                            jsons={k: jsons[k] for k in mc_keys},
+                            normalized_to=normalized_to
+                        )
+            
+                        # --- Agregar sufijos a MC y Data ---
+                        mc_norm = {f"{k}_{suffix}": v for k, v in mc_norm.items()}
+                        mc_sumw = {f"{k}_{suffix}": v for k, v in mc_sumw.items()}
+                        pkls = {f"{k}_{suffix}": v for k, v in pkls.items()}
+                        jsons = {f"{k}_{suffix}": v for k, v in jsons.items()}
+            
+                        # --- Combinar en el CR sin sobrescribir ---
+                        self.pkl_files_qcd[cr_name].update(pkls)
+                        self.json_files_qcd[cr_name].update(jsons)
+                        self.normalizations_qcd[cr_name].update(mc_norm)
+                        self.sumws_qcd[cr_name].update(mc_sumw)
 
         else:
 
@@ -298,6 +352,38 @@ class Plotter:
             self.normalization, self.sumw = get_weights(luminosity = lumi, xsecs = xsecs, pkls = self.pkl_map, jsons = self.json_map, normalized_to = normalized_to)
 
 
+            
+            if self.applied_data_driven:
+
+                cr_folders = {
+                    "cr_b": self.cr_B_folder,
+                    "cr_c": self.cr_C_folder,
+                    "cr_d": self.cr_D_folder
+                }
+
+                # Diccionarios para almacenar resultados
+                self.json_files_qcd = {}
+                self.pkl_files_qcd = {}
+                self.normalizations_qcd = {}
+                self.sumws_qcd = {}
+
+
+                for cr_name, folder in cr_folders.items():
+                    jsons = load_all_jsons(os.path.join(folder, "summary", "metadata"))
+                    pkls = load_all_pickles(os.path.join(folder, "summary", "pkl"))
+                
+                    norm, sumw = get_weights(
+                        luminosity=lumi, 
+                        xsecs=xsecs, 
+                        pkls=pkls, 
+                        jsons=jsons, 
+                        normalized_to=normalized_to
+                    )
+                
+                    self.json_files_qcd[cr_name] = jsons
+                    self.pkl_files_qcd[cr_name] = pkls
+                    self.normalizations_qcd[cr_name] = norm
+                    self.sumws_qcd[cr_name] = sumw
 
         # ------------------------------------------------
         #     Grouped samples
@@ -310,7 +396,34 @@ class Plotter:
         # -------------------------------------------------
         if self.applied_data_driven:
             QCD_squema_plot(self.control_region, self.qcd_shape)
-            
+
+        # -------------------------------------------------------
+        # Remove signal samples: include_signal_samples = False
+        # -------------------------------------------------------
+
+        if not include_signal_samples:
+            # Obtener todas las claves de señales a eliminar (de cualquier diccionario)
+            all_signal_keys = set()
+            for d in [self.pkl_map, self.json_map, self.normalization, self.sumw, self.grouped_samples]:
+                all_signal_keys.update(k for k in d if k.startswith("Signal"))
+        
+            # Eliminar esas claves de todos los diccionarios
+            for d in [self.pkl_map, self.json_map, self.normalization, self.sumw, self.grouped_samples]:
+                for k in all_signal_keys:
+                    d.pop(k, None)  # pop con None evita error si la clave no existe
+        
+            if all_signal_keys:
+                print(f"Following signals will be ignored: {sorted(all_signal_keys)}")
+        
+
+        """
+        if not include_signal_samples:
+            for d in [self.pkl_map, self.json_map, self.normalization, self.sumw, self.grouped_samples]:
+                keys_to_remove = [k for k in d if k.startswith("Signal")]
+                for k in keys_to_remove:
+                    d.pop(k)
+        """
+       
     
     def get_table_cutflow(self, variation, combined_samples=False):
 
@@ -428,7 +541,7 @@ class Plotter:
                 if sumw_row is not None:
                     df.loc["sumw"] = sumw_row
                 return df.round(2), scaled_error_df
-    
+
         # --- cutflow con errores ---
         if combined_samples:
             grouped_cutflows = defaultdict(lambda: defaultdict(float))
@@ -459,7 +572,7 @@ class Plotter:
             df_grouped["Total"] = df_grouped[bkg_cols].sum(axis=1)
             error_grouped_df["Total"] = np.sqrt(np.square(error_grouped_df[bkg_cols]).sum(axis=1))
     
-            df_with_errors = df_grouped.copy()
+            self.df_with_errors = df_grouped.copy()
             for col in df_grouped.columns:
                 for cut in df_grouped.index:
                     val = df_grouped.at[cut, col]
@@ -468,13 +581,13 @@ class Plotter:
                         err = error_grouped_df.at[cut, col]
     
                     if cut == "sumw":
-                        df_with_errors.at[cut, col] = f"{val:.2f}" if pd.notna(val) else ""
+                        self.df_with_errors.at[cut, col] = f"{val:.2f}" if pd.notna(val) else ""
                     elif col.startswith("Data"):
-                        df_with_errors.at[cut, col] = f"{val:.2f}" if pd.notna(val) else ""
+                        self.df_with_errors.at[cut, col] = f"{val:.2f}" if pd.notna(val) else ""
                     elif pd.notna(val) and pd.notna(err):
-                        df_with_errors.at[cut, col] = f"{val:.2f} ± {err:.2f}"
+                        self.df_with_errors.at[cut, col] = f"{val:.2f} ± {err:.2f}"
                     else:
-                        df_with_errors.at[cut, col] = ""
+                        self.df_with_errors.at[cut, col] = ""
     
             if sumw_row is not None:
                 # Agregar sumw para tabla combinada
@@ -487,19 +600,22 @@ class Plotter:
                 bkg_cols = [col for col in sumw_row_grouped.index if not col.startswith("Data")]
                 sumw_row_grouped["Total"] = sum([sumw_row_grouped[col] for col in bkg_cols if pd.notna(sumw_row_grouped[col])])
     
-                df_with_errors.loc["sumw"] = sumw_row_grouped
+                self.df_with_errors.loc["sumw"] = sumw_row_grouped
 
             # ---- QCD data driven ------
             if self.applied_data_driven:
-                self.qcd = qcd_estimation(json_map =self.json_map, normalization = self.normalization, 
-                                    variation = variation ,combined_samples=combined_samples, combined_2016=self.combined_2016,
+                self.qcd = qcd_estimation( 
+                                    variation = variation,
                                     grouped_samples=self.grouped_samples,
-                                    cr_B_folder = self.cr_B_folder, cr_C_folder = self.cr_C_folder, cr_D_folder = self.cr_D_folder,
+                                    combined_samples=combined_samples, combined_2016=self.combined_2016,
+                                    cr_BCD_normalization = self.normalizations_qcd,
+                                    cr_BCD_jsons =  self.json_files_qcd,
                                     shape_region=self.qcd_shape, ratio_regions=self.qcd_ratio
                 )
-                return df_with_errors, scaled_error_df, self.qcd
+                # normalization = self.normalization,
+                return self.df_with_errors, scaled_error_df, self.qcd
             else:
-                return df_with_errors, scaled_error_df  #, self.qcd
+                return self.df_with_errors, scaled_error_df  #, self.qcd
     
         else:
             df_with_errors = df.copy()
@@ -522,21 +638,28 @@ class Plotter:
     
             return df_with_errors, scaled_error_df
 
-    def get_table_report(self):
-        from collections import defaultdict
-        import pandas as pd
-        import numpy as np
-    
+    def get_table_report(self):   
         qcd_estimated = None
         qcd_estimated_error = None
     
+        # ==============================
+        # QCD data-driven
+        # ==============================
         if self.applied_data_driven:
             valor_str = self.qcd['QCD Estimated'].iloc[-1]
             qcd_estimated = float(valor_str.split('±')[0].strip())
             qcd_estimated_error = float(valor_str.split('±')[1].strip())
+
+            ratio_str = self.qcd['Ratio (X/Y)'].iloc[-1]
+            ratio_estimated =  float(ratio_str.split('±')[0].strip())
+            ratio_estimated_error =  float(ratio_str.split('±')[1].strip())
+
     
         report_map = {}
     
+        # ==============================
+        # Cargar yields esperados
+        # ==============================
         for sample, info in self.json_map.items():
             n_events = info.get("weighted_final_nevents", None)
             if n_events is None:
@@ -547,7 +670,9 @@ class Plotter:
             expected = float(n_events) * norm
             report_map[sample] = expected
     
+        # ==============================
         # Agrupar según self.grouped_samples
+        # ==============================
         grouped_report = defaultdict(float)
         for group_name, samples in self.grouped_samples.items():
             for sample in samples:
@@ -558,7 +683,9 @@ class Plotter:
         rename_columns = get_rename_map(self.grouped_samples)
         renamed_grouped_report = {rename_columns.get(k, k): v for k, v in grouped_report.items()}
     
+        # ==============================
         # Crear DataFrame principal
+        # ==============================
         df_report = pd.DataFrame([renamed_grouped_report], index=["Events"]).transpose()
     
         # Agregar QCD (Data-driven) antes de cualquier fila que empiece con 'Data'
@@ -575,51 +702,74 @@ class Plotter:
                 df_report.iloc[insert_position:]
             ])
     
-        # Fila Total (suma de todos los fondos)
-        bkg_mask = ~df_report.index.str.startswith("Data") & (df_report.index != "Data/Total bgr")
-        total = df_report.loc[bkg_mask, "Events"].apply(
-            lambda x: float(str(x).split('±')[0].strip()) if isinstance(x, str) else x
-        ).sum()
-        df_report.loc["Total bgr"] = total
+        # ==============================
+        # Identificar filas de fondo
+        # ==============================
+        bkg_rows = [
+            idx for idx in df_report.index
+            if not str(idx).startswith("Data")
+            and idx not in ["Total bgr", "Data/Total bgr"]
+            and not str(idx).startswith("Signal")
+        ]
+        non_bkg_rows = [idx for idx in df_report.index if idx not in bkg_rows]
     
+        # ==============================
+        # Fila Total (solo fondos)
+        # ==============================
+        if len(bkg_rows) > 0:
+            total = df_report.loc[bkg_rows, "Events"].apply(
+                lambda x: float(str(x).split('±')[0].strip()) if isinstance(x, str) else x
+            ).sum()
+            df_report.loc["Total bgr"] = total
+        else:
+            df_report.loc["Total bgr"] = 0.0
+    
+        # ==============================
         # Fila Data/Total
+        # ==============================
         data_rows = df_report.index[df_report.index.str.startswith("Data")]
         if len(data_rows) > 0:
             data_total = df_report.loc[data_rows, "Events"].apply(
                 lambda x: float(str(x).split('±')[0].strip()) if isinstance(x, str) else x
             ).sum()
-            ratio = data_total / total if total > 0 else float("nan")
+            total_val = float(str(df_report.loc["Total bgr", "Events"]).split('±')[0].strip())
+            ratio = data_total / total_val if total_val > 0 else float("nan")
             df_report.loc["Data/Total bgr"] = ratio
         else:
             df_report.loc["Data/Total bgr"] = float("nan")
     
-        # Añadir columna de porcentaje de contribución
+        # ==============================
+        # Columna contribución (%)
+        # ==============================
         contribution = []
+        total_val = float(str(df_report.loc["Total bgr", "Events"]).split('±')[0].strip())
         for idx in df_report.index:
-            if idx in ["Total bgr", "Data/Total bgr"] or str(idx).startswith("Data"):
+            if idx in ["Total bgr", "Data/Total bgr"] or str(idx).startswith("Data") or str(idx).startswith("Signal"):
                 contribution.append(float("nan"))
             else:
                 contrib_val = df_report.loc[idx, "Events"]
                 contrib_val = float(str(contrib_val).split('±')[0].strip()) if isinstance(contrib_val, str) else contrib_val
-                contrib = 100 * contrib_val / total if total > 0 else float("nan")
+                contrib = 100 * contrib_val / total_val if total_val > 0 else float("nan")
                 contribution.append(contrib)
     
         df_report["Contribution (%)"] = contribution
     
-        # Ordenar solo los fondos por contribución
-        bkg_rows = df_report.index[
-            (~df_report.index.str.startswith("Data")) &
-            (df_report.index != "Total bgr") &
-            (df_report.index != "Data/Total bgr")
-        ]
-        non_bkg_rows = df_report.index.difference(bkg_rows)
-    
-        df_bkg_sorted = df_report.loc[bkg_rows].sort_values("Contribution (%)", ascending=False)
+        # ==============================
+        # Ordenar por contribución
+        # ==============================
+        df_bkg_sorted = df_report.loc[bkg_rows].sort_values("Contribution (%)", ascending=False) if bkg_rows else pd.DataFrame()
         df_rest = df_report.loc[non_bkg_rows]
     
-        df_report = pd.concat([df_bkg_sorted, df_rest])
+        special_rows = []
+        for special in ["Total bgr", "Data/Total bgr"]:
+            if special in df_report.index:
+                special_rows.append(df_report.loc[[special]])
     
-        # === Cargar errores desde tabla de cutflow ===
+        df_report = pd.concat([df_bkg_sorted, df_rest] + special_rows)
+    
+        # ==============================
+        # Añadir errores
+        # ==============================
         if self.applied_data_driven:
             cutflow_table, _, _ = self.get_table_cutflow(variation="cutflow", combined_samples=True)
         else:
@@ -627,27 +777,39 @@ class Plotter:
     
         last_cut = cutflow_table.iloc[-1]
     
-        # === Añadir errores a la columna 'Events' como strings con '±' ===
         event_strings = []
         errors_for_total = []
         for idx in df_report.index:
             event_val = df_report.loc[idx, "Events"]
     
-            # Si ya está formateado con ±
             if isinstance(event_val, str) and '±' in event_val:
                 event_strings.append(event_val)
                 err = float(event_val.split('±')[1].strip())
-                if idx != "Data/Total bgr":
+                if idx not in ["Data/Total bgr"] and not str(idx).startswith("Signal"):
                     errors_for_total.append(err)
                 else:
                     errors_for_total.append(0.0)
                 continue
     
-            # Si es QCD (Data-driven) y no tenía formato aún
             if idx == "QCD (Data-driven)" and qcd_estimated is not None:
                 formatted = f"{qcd_estimated:.2f} ± {qcd_estimated_error:.2f}"
                 event_strings.append(formatted)
                 errors_for_total.append(qcd_estimated_error)
+                continue
+    
+            if str(idx).startswith("Signal"):
+                val_err_str = last_cut.get(idx)
+                if isinstance(val_err_str, str) and '±' in val_err_str:
+                    v, e = val_err_str.split("±")
+                    val_num = float(v.strip())
+                    err_val = float(e.strip())
+                    formatted = f"{val_num:.2f} ± {err_val:.2f}"
+                    errors_for_total.append(0.0)
+                else:
+                    val_num = float(str(event_val).split('±')[0].strip())
+                    formatted = f"{val_num:.2f} ± 0.00"
+                    errors_for_total.append(0.0)
+                event_strings.append(formatted)
                 continue
     
             val_err_str = last_cut.get(idx)
@@ -664,27 +826,156 @@ class Plotter:
     
         df_report["Events"] = event_strings
     
+        # ==============================
         # Sumar errores en cuadratura para 'Total bgr'
-        total_bkg_val = df_report.loc["Total bgr", "Events"]
-        if isinstance(total_bkg_val, str) and '±' in total_bkg_val:
-            total_bkg_val = float(total_bkg_val.split('±')[0].strip())
-        else:
-            total_bkg_val = float(total_bkg_val)
+        # ==============================
+        if "Total bgr" in df_report.index:
+            total_bkg_val = df_report.loc["Total bgr", "Events"]
+            if isinstance(total_bkg_val, str) and '±' in total_bkg_val:
+                total_bkg_val = float(total_bkg_val.split('±')[0].strip())
+            else:
+                total_bkg_val = float(total_bkg_val)
     
-        total_bkg_error = (np.array(errors_for_total) ** 2).sum() ** 0.5
-        df_report.loc["Total bgr", "Events"] = f"{total_bkg_val:.2f} ± {total_bkg_error:.2f}"
+            total_bkg_error = (np.array(errors_for_total) ** 2).sum() ** 0.5
+            df_report.loc["Total bgr", "Events"] = f"{total_bkg_val:.2f} ± {total_bkg_error:.2f}"
     
-        # Redondear Contribution
         df_report["Contribution (%)"] = df_report["Contribution (%)"].round(2)
-    
-        # Renombrar la columna para reflejar que incluye incertidumbre
         df_report.rename(columns={"Events": "Events ± stat"}, inplace=True)
         df_report.columns.name = "Samples"
     
-        return df_report
-
-
+        # ==============================
+        # Calcular Rtt
+        # ==============================
+        if bkg_rows:
+            main_bgr = df_report.loc[bkg_rows, "Contribution (%)"].idxmax()
+        else:
+            main_bgr = None
     
+        data_val, data_err = 0.0, 0.0
+        for row in df_report.index[df_report.index.str.startswith("Data")]:
+            val = df_report.loc[row, "Events ± stat"]
+            if isinstance(val, str) and "±" in val:
+                v, e = val.split("±")
+                data_val += float(v.strip())
+                data_err = np.sqrt(data_err**2 + float(e.strip())**2)
+            else:
+                data_val += float(str(val).split("±")[0].strip())
+    
+        if main_bgr is not None:
+            main_val = df_report.loc[main_bgr, "Events ± stat"]
+            if isinstance(main_val, str) and "±" in main_val:
+                v, e = main_val.split("±")
+                main_val = float(v.strip())
+                main_err = float(e.strip())
+            else:
+                main_val = float(str(main_val).split("±")[0].strip())
+                main_err = 0.0
+    
+            sum_no_main, err_no_main = 0.0, 0.0
+            for row in bkg_rows:
+                if row == main_bgr:
+                    continue
+                val = df_report.loc[row, "Events ± stat"]
+                if isinstance(val, str) and "±" in val:
+                    v, e = val.split("±")
+                    sum_no_main += float(v.strip())
+                    err_no_main = np.sqrt(err_no_main**2 + float(e.strip())**2)
+                else:
+                    sum_no_main += float(str(val).split("±")[0].strip())
+    
+            N = data_val - sum_no_main
+            Rtt = N / main_val if main_val > 0 else float("nan")
+            sigma_Rtt = np.sqrt(
+                (data_err / main_val) ** 2
+                + ((N / (main_val**2)) * main_err) ** 2
+                + (err_no_main / main_val) ** 2
+            )
+    
+            rtt_label = f"Rtt ({main_bgr})"
+            df_report.loc[rtt_label] = [f"{Rtt:.3f} ± {sigma_Rtt:.3f}", float("nan")]
+        else:
+            Rtt = float("nan")
+
+        # ==============================
+        # Agregar ratio (Data-driven)
+        # ==============================
+        if self.applied_data_driven and ratio_estimated is not None:
+            ratio_row_name = "QCD Ratio (X/Y)"
+            formatted_ratio = f"{ratio_estimated:.3f} ± {ratio_estimated_error:.3f}"
+            insert_position = next(
+                (i for i, idx in enumerate(df_report.index) if str(idx).startswith("Data")),
+                len(df_report)
+            )
+            df_report = pd.concat([
+                df_report.iloc[:insert_position],
+                pd.DataFrame({"Events ± stat": [formatted_ratio], "Contribution (%)": [float("nan")]}, index=[ratio_row_name]),
+                df_report.iloc[insert_position:]
+            ])
+
+        # ===================================
+        #  Agregar incertidumbre sistematica
+        # ====================================
+        if self.systematic_error:
+            if self.control_region in ["wjets", "signal", "tt", "qcd"]:
+                distriution_used = "lepton_met_mass"
+            elif self.control_region in ["ztomumu"]:
+                distriution_used = "mll"
+                
+            if self.applied_data_driven:                    
+                systematic_errors_table  = systematic_error_table_report(
+                        pkls_qcd  = self.pkl_files_qcd,
+                        norms_qcd= self.normalizations_qcd,
+                        qcd_shape = self.qcd_shape,
+                        qcd_ratio = self.qcd_ratio,
+                        qcd_ratio_integrated = self.qcd_ratio_integrated,
+                        pkls =  self.pkl_map,
+                        norms = self.normalization,
+                        variable =  distriution_used,
+                        binning = [0, 10000000000]
+                )
+            else:
+                systematic_errors_table  = systematic_error_table_report(
+                        pkls =  self.pkl_map,
+                        norms = self.normalization,
+                        variable =  distriution_used,
+                        binning = [0, 10000000000]
+                )                
+
+            reverse_map = {v: k for k, v in rename_columns.items()}  # Mapa invertido
+            reverse_map["QCD (Data-driven)"] = "qcd"
+            
+            syst_up, syst_down = [], []
+            for idx in df_report.index:
+                key = reverse_map.get(idx, idx).lower()
+                if key in systematic_errors_table:
+                    syst_up.append(systematic_errors_table[key]["error_up"])
+                    syst_down.append(systematic_errors_table[key]["error_down"])
+                elif idx == "Total bgr" and "total_bkg" in systematic_errors_table:
+                    syst_up.append(systematic_errors_table["total_bkg"]["error_up"])
+                    syst_down.append(systematic_errors_table["total_bkg"]["error_down"])
+                else:
+                    syst_up.append(float("nan"))
+                    syst_down.append(float("nan"))
+        
+            # Asegurar que no haya duplicados
+            for col in ["Syst up", "Syst down"]:
+                if col in df_report.columns:
+                    df_report = df_report.drop(columns=[col])
+        
+            # Agregar nuevas columnas
+            df_report["Syst up"] = syst_up
+            df_report["Syst down"] = syst_down
+        
+            # Reordenar columnas: insertar justo antes de Contribution
+            cols = [c for c in df_report.columns if c not in ["Syst up", "Syst down"]]  # limpiar duplicados
+            if "Contribution (%)" in cols:
+                contrib_idx = cols.index("Contribution (%)")
+                new_order = cols[:contrib_idx] + ["Syst up", "Syst down"] + cols[contrib_idx:]
+                df_report = df_report.reindex(columns=new_order)
+
+        
+        return df_report, Rtt
+
         
     # -----------------------------------
     #        1D plot
@@ -769,74 +1060,136 @@ class Plotter:
     
             self.grouped_histos[category] = weighted_hist
 
-        if self.signal:
-            for sample in processed_hists:
-                if sample.startswith("Signal"):
-                    hist = processed_hists[sample]
- 
-                    # Quitar extensión .pkl si la tiene
-                    sample_clean = os.path.splitext(sample)[0]
-                    norm = self.normalization.get(sample_clean, 1.0)
-                    
-                    self.grouped_histos[sample_clean] = hist * norm
 
- 
+        for sample in processed_hists:
+            if sample.startswith("Signal"):
+                hist = processed_hists[sample]
+
+                # Quitar extensión .pkl si la tiene
+                sample_clean = os.path.splitext(sample)[0]
+                norm = self.normalization.get(sample_clean, 1.0)
+                
+                self.grouped_histos[sample_clean] = hist * norm
+                
         if self.applied_data_driven:
-            qcd_hist = get_qcd_estimation(
-                pkls_folder_shape = os.path.join(self.cr_B_folder, "summary", "pkl"),
-                pkls_folder_num = os.path.join(self.cr_C_folder, "summary", "pkl"),
-                pkls_folder_den = os.path.join(self.cr_D_folder, "summary", "pkl"),
+
+            qcd_estimation, qcd_estimation_error = get_qcd_estimation(
+                cr_BCD_pkls=self.pkl_files_qcd,
+                cr_BCD_normalization=self.normalizations_qcd,
+                qcd_shape = self.qcd_shape,
+                qcd_ratio = self.qcd_ratio,
                 bins=self.binning_hist,
                 distribution=self.distribution,
                 consider_overflow=self.overflow,
                 consider_underflow=self.underflow,
-                normalization_factors=self.normalization,
-                ratio_per_bin = self.qcd_ratio_integrated
+                qcd_ratio_integrated = self.qcd_ratio_integrated,
+                combined_2016 = self.combined_2016
             )
 
+            self.grouped_histos['qcd'] = qcd_estimation
+
+        else:
+            qcd_estimation_error = {}
+            
+            
 
         
-            self.grouped_histos['qcd'] = qcd_hist
-            
-        hist_plotter = HistogramPlotter(year=self.year, lepton_flavor = self.lepton_flavor, combined_2016 = self.combined_2016, is_signal = self.signal, output_dir = self.output_folder)
-     
 
+        if self.combined_2016:
+            # Filtrar solo señales con sufijo 2016 o 2016APV
+            signal_keys_to_combine = [k for k in self.grouped_histos.keys() 
+                                      if k.startswith("SignalTau_") and ("_2016" in k or "_2016APV" in k)]
         
-        hist_plotter.plot(
-            grouped_histos=self.grouped_histos,
-            binning=self.binning_hist,
-            feature=self.distribution,
-            main_bgr_variable=main_bgr,
-            SF_main_bgr = sf_bgr,
-            log_scale=log,
-            events_gev = divided_GeV,
-            cms_loc = 0.0,
-            y_axis_range=y_axis,
-            ratio_axis_range = ratio_limits,
-            signals = self.signal_superposition,
-        )
-            
-        return processed_hists, self.grouped_histos
+            combined_signals = {}
+            for key in signal_keys_to_combine:
+                # Extraer masa
+                mass = key.replace("SignalTau_", "").replace("_2016APV", "").replace("_2016", "")
+                group_name = f"SignalTau_{mass}"
+        
+                if group_name not in combined_signals:
+                    combined_signals[group_name] = np.zeros_like(self.grouped_histos[key])
+        
+                combined_signals[group_name] += self.grouped_histos[key]
+        
+            # Eliminar solo las originales _2016 y _2016APV
+            for key in signal_keys_to_combine:
+                self.grouped_histos.pop(key)
+        
+            # Añadir las combinadas
+            self.grouped_histos.update(combined_signals)
+
 
 
     
+            
+        hist_plotter = HistogramPlotter(year=self.year, lepton_flavor = self.lepton_flavor, combined_2016 = self.combined_2016, is_signal = self.signal, output_dir = self.output_folder)
+
+        if main_bgr in self.grouped_histos:
+            self.grouped_histos[main_bgr] = (
+                self.grouped_histos[main_bgr] * sf_bgr
+            )
+
+        if self.systematic_error and self.distribution in ["mll", "lepton_met_mass"]:
+            syst_variation = self.get_systematics_per_bin_per_bgr(distribution = self.distribution, binning = self.binning_hist,  include_nominal= True)
+
+            
+            hist_plotter.plot(
+                grouped_histos=self.grouped_histos,
+                binning=self.binning_hist,
+                feature=self.distribution,
+                main_bgr_variable=main_bgr,
+                SF_main_bgr = sf_bgr,
+                log_scale=log,
+                events_gev = divided_GeV,
+                cms_loc = 0.0,
+                y_axis_range=y_axis,
+                ratio_axis_range = ratio_limits,
+                signals = self.signal_superposition,
+                denominator = self.df_with_errors,
+                include_systematics = self.systematic_error,
+                systematics = syst_variation,
+                qcd_estimation_error = qcd_estimation_error
+            )
+
+        else:
+            systematics = {}
+            hist_plotter.plot(
+                grouped_histos=self.grouped_histos,
+                binning=self.binning_hist,
+                feature=self.distribution,
+                main_bgr_variable=main_bgr,
+                SF_main_bgr = sf_bgr,
+                log_scale=log,
+                events_gev = divided_GeV,
+                cms_loc = 0.0,
+                y_axis_range=y_axis,
+                ratio_axis_range = ratio_limits,
+                signals = self.signal_superposition,
+                denominator = self.df_with_errors,
+                include_systematics = False,
+                systematics = systematics,
+                qcd_estimation_error = qcd_estimation_error
+            )
+
+        self.errors_per_bin = hist_plotter.errors_plot()
+
+        return processed_hists, self.grouped_histos
+
     def event_table_by_bin(self) -> pd.DataFrame:
         """
         Construye una tabla donde cada fila es un bin (según 'binning') y
-        cada columna representa un grupo (ej. 'tt', 'st', etc.), con el número
-        de eventos por bin y grupo.
+        cada columna representa un grupo (ej. 'tt', 'st', etc.), con:
+            - Valor central ± error estadístico
+            - Si self.systematic_error=True: añade también errores sistemáticos (Up, Down)
+            - Si self.systematic_error=False: solo ± estadístico
     
-        Agrega:
-        - Columna 'Total MC': suma de todas las muestras excepto 'data'
-        - Columna 'Data / Total MC': razón entre data y MC
+        Además:
+        - Columna 'Total MC': suma de todas las muestras excepto 'Data'
+        - Columna 'Data / Total MC': razón entre Data y MC
         - Fila 'Total' con sumas por grupo y razón total
-    
-        Returns:
-            pd.DataFrame: Tabla con una fila por bin, columnas por grupo,
-                          y columnas adicionales de totales y razones.
         """
     
-        # Mapeo de nombres legibles para columnas
+        # Nombres legibles
         rename_columns = {
             "vv": "Diboson",
             "st": "Single Top",
@@ -849,46 +1202,137 @@ class Plotter:
         }
     
         n_bins = len(self.binning_hist) - 1
-        bin_labels = [f"[{self.binning_hist[i]}, {self.binning_hist[i+1]})" for i in range(n_bins)]
+        bin_labels = [f"{self.binning_hist[i]}-{self.binning_hist[i+1]}_" for i in range(n_bins)]
     
-        data = {}
+        # --- Valores ---
+        df_values = pd.DataFrame(self.grouped_histos, index=bin_labels)
+        df_values = df_values.rename(columns=rename_columns)
     
-        for group_name, bin_array in self.grouped_histos.items():
-            if len(bin_array) != n_bins:
-                raise ValueError(f"El grupo '{group_name}' tiene {len(bin_array)} valores, se esperaban {n_bins}.")
-            data[group_name] = bin_array
+        # --- Errores estadísticos y sistemáticos ---
+        syst_variation = None
+        if self.systematic_error:
+            syst_variation = self.get_systematics_per_bin_per_bgr(
+                distribution=self.distribution,
+                binning=self.binning_hist,
+                include_nominal=False
+            )
     
-        df = pd.DataFrame(data, index=bin_labels)
+        df_stat, df_syst_up, df_syst_down = {}, {}, {}
     
-        # Renombrar columnas si están en el mapeo
-        df = df.rename(columns=rename_columns)
+        for group_name, errors in self.errors_per_bin.items():
+            col_name = rename_columns.get(group_name, group_name)  # Nombre legible
+            stat_err = np.array(errors)
+            df_stat[col_name] = stat_err
     
-        # Detectar nombre de columna de data (renombrada)
-        data_col = rename_columns.get("data", "data")
+            # Añadir sistemáticos si corresponde
+            if self.systematic_error and syst_variation and group_name in syst_variation:
+                syst_df = syst_variation[group_name][1]
+                up_list, down_list = [], []
+                for bin_label in bin_labels:
+                    try:
+                        up = syst_df.loc["Total", f"{bin_label}|Nom-Up|"]
+                        down = syst_df.loc["Total", f"{bin_label}|Nom-Down|"]
+                    except KeyError:
+                        up, down = 0.0, 0.0
+                    up_list.append(up)
+                    down_list.append(down)
+                df_syst_up[col_name] = up_list
+                df_syst_down[col_name] = down_list
     
-        # Columnas MC (excluyendo 'Data')
-        mc_columns = [col for col in df.columns if col != data_col]
+        df_stat = pd.DataFrame(df_stat, index=bin_labels)
+        if self.systematic_error:
+            df_syst_up = pd.DataFrame(df_syst_up, index=bin_labels)
+            df_syst_down = pd.DataFrame(df_syst_down, index=bin_labels)
     
-        # Total MC
-        df["Total MC"] = df[mc_columns].sum(axis=1)
+        # --- Construir tabla final ---
+        df = pd.DataFrame(index=bin_labels)
+        for col in df_values.columns:
+            if col == "Data":
+                df[col] = df_values[col].round(2)  # Data solo valor
+            else:
+                stat = df_stat[col]
+                if self.systematic_error and col in df_syst_up.columns:
+                    syst_up = df_syst_up[col]
+                    syst_down = df_syst_down[col]
+                    df[col] = [
+                        f"{val:.2f} ± {st:.2f} (Up: {up:.2f}, Down: {down:.2f})"
+                        for val, st, up, down in zip(df_values[col], stat, syst_up, syst_down)
+                    ]
+                else:
+                    df[col] = [f"{val:.2f} ± {st:.2f}" for val, st in zip(df_values[col], stat)]
     
-        # Ratio Data / Total MC, evitando división por cero
-        df["Data / Total MC"] = np.where(
-            df["Total MC"] > 0, df[data_col] / df["Total MC"], np.nan
-        )
+        # --- Totales MC ---
+        mc_columns = [c for c in df_values.columns if c != "Data" and not c.startswith("Signal")]
+        total_mc = df_values[mc_columns].sum(axis=1)
+        total_stat = np.sqrt((df_stat[mc_columns]**2).sum(axis=1))
     
-        # Fila Total
-        total_row = df.sum(numeric_only=True)
-        if total_row["Total MC"] > 0:
-            total_row["Data / Total MC"] = total_row[data_col] / total_row["Total MC"]
+        if self.systematic_error:
+            common_cols = [c for c in mc_columns if c in df_syst_up.columns]
+    
+            total_up = np.sqrt((df_syst_up[common_cols]**2).sum(axis=1))
+            total_down = np.sqrt((df_syst_down[common_cols]**2).sum(axis=1))
+    
+            df["Total MC"] = [
+                f"{val:.2f} ± {st:.2f} (Up: {up:.2f}, Down: {down:.2f})"
+                for val, st, up, down in zip(total_mc, total_stat, total_up, total_down)
+            ]
         else:
-            total_row["Data / Total MC"] = np.nan
+            df["Total MC"] = [f"{val:.2f} ± {st:.2f}" for val, st in zip(total_mc, total_stat)]
     
-        df.loc["Total"] = total_row
+        # --- Data / Total MC ---
+        if "Data" in df_values.columns:
+            df["Data / Total MC"] = np.where(total_mc > 0, df_values["Data"] / total_mc, np.nan).round(2)
+        else:
+            df["Data / Total MC"] = np.nan
     
-        return df.round(2)
-        
+        # --- Fila Total ---
+        total_row_vals = df_values.sum(numeric_only=True)
+        total_row_stat = np.sqrt((df_stat**2).sum(numeric_only=True))
+    
+        row = {}
+        for col in df_values.columns:
+            if col == "Data":
+                row[col] = f"{total_row_vals[col]:.2f}"
+            else:
+                if self.systematic_error and col in df_syst_up.columns:
+                    total_row_up = np.sqrt((df_syst_up[col]**2).sum())
+                    total_row_down = np.sqrt((df_syst_down[col]**2).sum())
+                    row[col] = (
+                        f"{total_row_vals[col]:.2f} ± {total_row_stat[col]:.2f} "
+                        f"(Up: {total_row_up:.2f}, Down: {total_row_down:.2f})"
+                    )
+                else:
+                    row[col] = f"{total_row_vals[col]:.2f} ± {total_row_stat[col]:.2f}"
+    
+        if self.systematic_error:
+            common_cols = [c for c in mc_columns if c in df_syst_up.columns]
+    
+            total_row_up = np.sqrt((df_syst_up[common_cols]**2).sum().sum())
+            total_row_down = np.sqrt((df_syst_down[common_cols]**2).sum().sum())
+    
+            row["Total MC"] = (
+                f"{total_row_vals[mc_columns].sum():.2f} ± {np.sqrt((total_row_stat[mc_columns]**2).sum()):.2f} "
+                f"(Up: {total_row_up:.2f}, Down: {total_row_down:.2f})"
+            )
+        else:
+            row["Total MC"] = (
+                f"{total_row_vals[mc_columns].sum():.2f} ± {np.sqrt((total_row_stat[mc_columns]**2).sum()):.2f}"
+            )
+    
+        if "Data" in total_row_vals and total_row_vals[mc_columns].sum() > 0:
+            row["Data / Total MC"] = round(total_row_vals["Data"] / total_row_vals[mc_columns].sum(), 2)
+        else:
+            row["Data / Total MC"] = np.nan
+    
+        df.loc["Total"] = row
+    
+        return df
 
+
+
+
+
+        
     # -----------------------------------
     #        2D plot
     # -----------------------------------
@@ -952,20 +1396,78 @@ class Plotter:
     #        Root files
     # -----------------------------------
     def get_root_files(self, CR_name:str, with_plots: bool, distribution: str, binning):
-        event_table, percentages  = load_systematic_variations(self.pkl_map, self.normalization,  distribution, binning, with_plots, self.year, self.lepton_flavor, CR_name, self.root_files_folder)
 
+        if self.applied_data_driven:
+            event_table, percentages  = load_systematic_variations(
+                pkls_qcd = self.pkl_files_qcd, norms_qcd = self.normalizations_qcd,
+                qcd_shape = self.qcd_shape, qcd_ratio = self.qcd_ratio, qcd_ratio_integrated = self.qcd_ratio_integrated,
+                pkls = self.pkl_map, norms = self.normalization,  
+                variable = distribution, binning = binning, with_plots = with_plots, 
+                year = self.year, lepton = self.lepton_flavor,
+                region = CR_name, output_dir = self.root_files_folder
+            )
+
+        else:
+            event_table, percentages  = load_systematic_variations(
+                pkls = self.pkl_map, norms = self.normalization,  
+                variable = distribution, binning = binning, with_plots = with_plots, 
+                year = self.year, lepton = self.lepton_flavor,
+                region = CR_name, output_dir = self.root_files_folder
+            )
         
+
+
         return event_table, percentages
 
     # ------------------------------------
     #   Systematic variation per bin
     # ------------------------------------
-    def get_systematics_per_bin_per_bgr(self, bgr):
-        
-        df_bgr = load_systematic_variation_per_bgr(self.pkl_map, self.normalization, self.distribution, self.binning_hist, bgr)
+    def get_systematics_per_bin_per_bgr(self, distribution, binning, include_nominal):
 
-        return df_bgr
+        """
+        if self.control_region in ["wjets", "signal"]:
+            backgrounds = ["tt", "dy", "st", "vv", "higgs", "wj", "qcd"]
+        else:
+            backgrounds = ["tt", "dy", "st", "vv", "higgs", "wj", "qcd"]
+        """
 
+        backgrounds = ["tt", "dy", "st", "vv", "higgs", "wj", "qcd"]
+    
+        results = {}
+        for bgr in backgrounds:
+
+            if self.applied_data_driven:
+                df_bgr_per_bin = load_systematic_variation_per_bgr(
+                    pkls_qcd = self.pkl_files_qcd, norms_qcd = self.normalizations_qcd,
+                    qcd_shape = self.qcd_shape, qcd_ratio = self.qcd_ratio, qcd_ratio_integrated = self.qcd_ratio_integrated,
+                    pkls = self.pkl_map, norms = self.normalization,  
+                    variable = distribution, binning = binning, 
+                    bgr = bgr,
+                )
+
+            else:
+                df_bgr_per_bin = load_systematic_variation_per_bgr(
+                    pkls = self.pkl_map, norms = self.normalization,  
+                    variable = distribution, binning = binning,
+                    bgr = bgr
+                )
+
+            # 👇 Saltar si no existe en los pkls
+            if df_bgr_per_bin is None:
+                print(f"[INFO] Se omite '{bgr}' porque no está en los pkls")
+                continue
+                
+            df_bgr, df_syst_error = process_systematics_table(
+                df_bgr_per_bin,
+                include_nominal=include_nominal
+            )
+    
+            results[bgr] = (df_bgr, df_syst_error)
+    
+        return results
+
+
+    
 
     # ------------------------------------
     #   QCD estimation: comparison
