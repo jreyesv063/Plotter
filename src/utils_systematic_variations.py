@@ -439,7 +439,7 @@ def rename_map():
         "fatjet_JER": "CMS_res_fj",   
         "met_trigger_wj": "CMS_eff_MET_trigger",
         "met_trigger_tt": "CMS_eff_MET_trigger",
-        "met_trigger_wj": "CMS_eff_MET_trigger",
+        "met_trigger": "CMS_eff_MET_trigger",
         "ISR_MLM_2016APV": "CMS_isr",
         "ISR_MLM_2016": "CMS_isr",
         "ISR_MLM_2017": "CMS_Z_isr",
@@ -451,6 +451,10 @@ def rename_map():
         "top_boost_weight_tau_2016": "CMS_ttbar_boost",
         "top_boost_weight_tau_2017": "CMS_ttbar_boost",
         "top_boost_weight_tau_2018": "CMS_ttbar_boost",
+        "psweight_ISR": "ps_ISR",
+        "psweight_FSR": "ps_FSR",   
+        "Alpha(PDF)": "Alpha(PDF)",
+        "PDF": "PDF"
     }
 
 def find_base_name(var_name, rename_dict):
@@ -476,6 +480,7 @@ def save_histograms_to_root(
 ):
     os.makedirs(output_dir, exist_ok=True)
 
+
     sample_map = sample_map or {
         "tt": "tt",
         "st": "SingleTop",
@@ -484,7 +489,7 @@ def save_histograms_to_root(
         "dy": "DYJetsToLNu",
         "wj": "WJetToLNu",
         "total_bkg": "Total_bgr",
-        "data": "Data",  # Cambiado de "data" a "Data" con D mayúscula
+        "data": "data_obs",
         "qcd": "QCD"
     }
 
@@ -507,7 +512,8 @@ def save_histograms_to_root(
             
             root_file = ROOT.TFile(output_path, "RECREATE")
             # Crear histograma nominal vacío
-            empty_hist = create_root_histogram(np.zeros(len(bin_edges) - 1), bin_edges, f"CMS_{suffix}_nom")
+            #empty_hist = create_root_histogram(np.zeros(len(bin_edges) - 1), bin_edges, f"CMS_{suffix}_nom")
+            empty_hist = create_root_histogram(np.zeros(len(bin_edges) - 1), bin_edges, f"{sample_name}_{suffix}_nom")
             empty_hist.Write()
             root_file.Close()
             
@@ -518,11 +524,13 @@ def save_histograms_to_root(
 
         # Histograma nominal
         if nominal_values is not None:
-            hist = create_root_histogram(nominal_values, bin_edges, f"CMS_{suffix}_nom")
+            #hist = create_root_histogram(nominal_values, bin_edges, f"CMS_{suffix}_nom")
+            hist = create_root_histogram(nominal_values, bin_edges, f"{sample_name}_{suffix}_nom")
             hist.Write()
         else:
             # Crear histograma nominal vacío si no existe
-            empty_hist = create_root_histogram(np.zeros(len(bin_edges) - 1), bin_edges, f"CMS_{suffix}_nom")
+            #empty_hist = create_root_histogram(np.zeros(len(bin_edges) - 1), bin_edges, f"CMS_{suffix}_nom")
+            empty_hist = create_root_histogram(np.zeros(len(bin_edges) - 1), bin_edges, f"{sample_name}_{suffix}_nom")
             empty_hist.Write()
 
         # Variaciones "up"

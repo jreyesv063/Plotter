@@ -106,23 +106,23 @@ class HistogramPlotter:
     def init_sample_colors(self) -> Dict[str, str]:
         """Define color scheme for different physics processes"""
         return {
-            "wj": "#f89c20",              # Orange
-            "dy": "#5790fc",              # Blue
-            "vv": "#e42536",              # Red
-            "tt": "#A9A9A9",              # Gray
-            "st": "#8B008B",              # Dark Magenta
-            "higgs": "#FFFF00",           # Yellow
+            "wj": "#94a4a2",              # Orange
+            "dy": "#3f90da",              # Blue
+            "vv": "#832db6",              # Red
+            "tt": "#bd1f01",              # Gray
+            "st": "#ffa90e",              # Dark Magenta
+            "higgs": "#e76300",           # Yellow
             "qcd": "#ffc0cb",             # Pink
 
             # Señales: colores distintos y contrastantes
-            "SignalTau_300GeV": "#00CED1",  # DarkTurquoise
-            "SignalTau_400GeV": "#9400D3",  # DarkViolet
-            "SignalTau_600GeV": "#FF4500",  # OrangeRed
-            "SignalTau_750GeV": "#1E90FF",  # DodgerBlue
-            "SignalTau_1000GeV": "#32CD32", # LimeGreen
-            "SignalTau_1500GeV": "#FFD700", # Gold
-            "SignalTau_2000GeV": "#FF69B4", # HotPink
-            "SignalTau_3000GeV": "#00FA9A", # MediumSpringGreen
+            "SignalTau_300GeV": "#717581",  # DarkTurquoise
+            "SignalTau_400GeV": "#92dadd",  # DarkViolet
+            "SignalTau_600GeV": "#1f77b4",  # OrangeRed
+            "SignalTau_750GeV": "#aec7e8",  # DodgerBlue
+            "SignalTau_1000GeV": "#ff7f0e", # LimeGreen
+            "SignalTau_1500GeV": "#ffbb78", # Gold
+            "SignalTau_2000GeV": "#2ca02c", # HotPink
+            "SignalTau_3000GeV": "#98df8a", # MediumSpringGreen
         }
 
     def init_label_map(self) -> Dict[str, Dict[str, str]]:
@@ -232,7 +232,7 @@ class HistogramPlotter:
                 
                 "njets":  r"$N(j)$", 
                 "njets_old": r"N(j)",
-                "njets_full":  r"$N(j + f + b)$", 
+                "njets_full": r"$N(j + f + b)$", 
                 "nbjets": r"$N(b)$",                  
                 "npvs": r"$npvs$",    
                 "nmuons": r"$N(\mu)$",    
@@ -406,8 +406,8 @@ class HistogramPlotter:
         lumi_map = {
             "2017": "41.5 fb$^{-1}$ (2017, 13 TeV)",
             "2018": "59.8 fb$^{-1}$ (2018, 13 TeV)",
-            "2016": "16.8 fb$^{-1}$ (2016, 13 TeV)",
-            "2016APV": "19.5 fb$^{-1}$ (2016, 13 TeV)"
+            "2016": "16.8 fb$^{-1}$ (2016postVFP, 13 TeV)",
+            "2016APV": "19.5 fb$^{-1}$ (2016preVFP, 13 TeV)"
         }
         
         return lumi_map.get(self.year, "")
