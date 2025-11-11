@@ -129,7 +129,7 @@ def load_systematic_variations(
 
     # --- Si 'data' no existe, crear histograma vacío ---
     if "data" not in histograms or histograms["data"].get("nominal") is None:
-        print("⚠️ 'data' no encontrada. Creando ROOT con histograma vacío...")
+        print("⚠️ 'data' not found. Creating ROOT file with an empty histogram")
         empty_data_hist = {
             "nominal": np.zeros(len(binning)-1),
             "variations_up": {},
@@ -296,7 +296,8 @@ def variation_histograms(pkls, norm, distribution, binning):
     }
 
     for group, content in grouped_object_variations.items():
-        if group in ["data", "signal", "total_bkg"]:
+        if group.startswith(("data", "Signal", "total_bkg")):
+        #if group in ["data", "signal", "total_bkg"]:
             continue
         grouped_object_variations["total_bkg"]["nominal"] += content["nominal"]
 
@@ -571,9 +572,11 @@ def get_variation_event_table(histograms_dict):
     nominals = {}
 
     for sample, contents in histograms_dict.items():
-        if sample.lower() in ["data", "signal"]:
-            continue
-
+        #if sample.startswith("data") or sample.startswith("Signal"):
+        #if sample.lower() in ["data", "signal"]
+        #if sample = "data":
+        #    continue
+        
         sample_name = sample_map.get(sample, sample)
 
         # Nominal
@@ -747,9 +750,9 @@ def get_total_relative_deviation_all(histograms_dict, binning):
 
     # Procesar datos
     for sample_key, contents in histograms_dict.items():
-        if sample_key.lower() in ["data", "signal"]:
-            continue
-
+        #if sample_key.lower() in ["data", "signal"]:
+        #if sample_key.startswith("data") or sample_key.startswith("Signal"): 
+        #    continue
         nominal = contents.get("nominal")
         if nominal is None:
             continue
