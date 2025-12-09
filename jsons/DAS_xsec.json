@@ -44,14 +44,16 @@
     "GluGluHToWWToLNuQQ": 28.88,
 
 
-    "SignalTau_300GeV": 1.0,    
-    "SignalTau_400GeV": 1.0,
-    "SignalTau_600GeV": 1.0,
-    "SignalTau_750GeV": 1.0,
-    "SignalTau_1000GeV": 1.0,
-    "SignalTau_1500GeV": 1.0,
-    "SignalTau_2000GeV": 1.0,
-    "SignalTau_3000GeV": 1.0,
+    "SignalTau_300GeV": 91.7,    
+    "SignalTau_400GeV": 30.2,
+    "SignalTau_600GeV": 5.97,
+    "SignalTau_750GeV": 2.32,
+    "SignalTau_1000GeV": 0.646,
+    "SignalTau_1500GeV": 0.0891,
+    "SignalTau_2000GeV": 0.0182,
+    "SignalTau_3000GeV": 0.00134,
+    
+    
     
     "SignalElectron_600GeV": 29.6877596,
     "SignalElectron_1TeV": 5.23668126,

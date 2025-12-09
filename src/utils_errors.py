@@ -96,7 +96,6 @@ def compute_eff_cutflow(cutflow_table, normalization):
     result_map = {}
     ratio_data = {}
     scaled_errors = {}
-
     sumw_row = cutflow_table.loc['sumw']
 
     for cut in cutflow_table.index:

@@ -149,8 +149,8 @@ def load_systematic_variations(
                             year=year)
 
     # --- Generar tablas ---
-    event_table = get_variation_event_table(histograms)
-    df_deviations = get_total_relative_deviation_all(histograms, binning)
+    event_table = get_variation_event_table(histograms, year)
+    df_deviations = get_total_relative_deviation_all(histograms, binning, year)
 
     return event_table, df_deviations
 
@@ -165,7 +165,8 @@ def load_systematic_variation_per_bgr(
     norms: dict = None,
     variable: str = "",
     binning: list[float] = None,
-    bgr: str = ""
+    bgr: str = "",
+    year: str = ""
 ):
     
     histograms = make_histograms(
@@ -185,7 +186,7 @@ def load_systematic_variation_per_bgr(
         print(f"[INFO] Background '{bgr}' no está en histograms_dict, se omite.")
         return None
 
-    df_bgr = get_binwise_table_for_sample(histograms, binning, bgr)
+    df_bgr = get_binwise_table_for_sample(histograms, binning, bgr, year)
 
     return df_bgr
 
@@ -413,49 +414,65 @@ def plot_variation_histograms(histograms, binning, output_dir="plots", log=False
 
 
 
-def rename_map():
+def rename_map(year = "2017"):
+    """
+    Referencia de los nombres:     
+    https://cms-analysis.docs.cern.ch/guidelines/systematics/systematics/systematics_master.yml
+    https://cms-analysis.docs.cern.ch/guidelines/uncertainty_digest/BTV/#btv-subjet-tagging-combine-names
+    https://cms-analysis-corrections.docs.cern.ch/#2017-ul
+    
+    """
+    year_map = {
+        "2016APV": "2016preVFP",
+        "2016": "2016postVFP",
+        "2017": "2017",
+        "2018": "2018"
+    }
+    
     return {
-        "electron_reco_Above": "CMS_eff_e_reco_above20",
-        "electron_reco_Below": "CMS_eff_e_reco_below20",
-        "electron_id": "CMS_eff_e_id",
-        "jet_JES": "CMS_scale_j",
-        "jet_JER": "CMS_res_j",
-        "pujetid": "CMS_eff_j_PUJET",
-        "bc_jets": "CMS_btag_heavy",
-        "light_jets": "CMS_btag_light",
-        "met_UNCLUSTERED": "CMS_MET_unclustered",
+        # Taus
+        "e -> tau_h fake rate": "CMS_fake_t_DeepTau2017v2p1_VSe",
+        "jet -> tau_h fake rate": "CMS_fake_t_DeepTau2017v2p1_VSjet",
+        "mu -> tau_h fake rate": "CMS_fake_t_DeepTau2017v2p1_VSmu",
+        "TES": "CMS_scale_t_DeepTau2017v2p1",   # Revisar: 'single tau energy scale uncertainty for standard hadronic taus from all sources, and for all periods.'  
+        # Muons
+        "muon_reco": "CMS_eff_m_reco_syst",     # Revisar: Systematic uncertainty on muon reconstruction, correlated accross all eras'
+        "muon_id": "CMS_eff_m_id_syst",
+        "muon_iso": "CMS_eff_m_iso_syst",        
+        "ROCHESTER": "CMS_scale_m",             # Revisar: 'single energy scale uncertainty for muons for all data-taking periods'
+        # Electrons
+        "electron_id": "CMS_eff_e_id_13TeV",
+        "electron_reco_Above": "CMS_eff_e_reco_above20_13TeV",  # será personalizado en el YAML "CMS_eff_e_reco_13TeV": 'electron reconstruction efficiency uncertainty across all c.o.m energies'
+        "electron_reco_Below": "CMS_eff_e_reco_below20_13TeV",  # será personalizado en el YAML "CMS_eff_e_reco_13TeV": 'electron reconstruction efficiency uncertainty across all c.o.m energies'
+        # B jets
+        "bc_jets": "CMS_btag_fixedWP_bc_simple",   # Revisar: 'simplified b-tagging uncertainty for b and c jets with only a single nuisance parameter'
+        "light_jets": "CMS_btag_fixedWP_light_simple", # Revisar: description: 'simplified b-tagging uncertainty for light jets with only a single nuisance parameter'
+        # Jets
+        "jet_JES": "CMS_scale_j",      # Revisar: 'single overall jet energy scale uncertainty.'
+        "jet_JER": "CMS_res_j",       # Revisar:  'jet energy resolution uncertainty correlated accross all years.'
+        "pujetid": f"CMS_eff_j_PUJetID_eff_{year_map[year]}",
+        # Fatjets
+        "fatjet_JES": "CMS_scale_fj", # Será personalizado en el Yaml
+        "fatjet_JER": "CMS_res_fj",   # Será personalizado en el Yaml
+        "QCD_vs_W": "CMS_eff_j_ParticleNet_W_Nominal",
+        "QCD_vs_Top": "CMS_eff_j_ParticleNet_Top_Nominal",
+        # L1 Prefiring
+        "L1Prefiring": "CMS_l1_ecal_prefiring", # 'Uncertainty due to level-1 triggering of bunch crossings before intended trigger in 2016 and 2017, averaged over 2016-18.'
+        # Pileup
         "pileup": "CMS_pileup",
-        "jet -> tau_h fake rate": "CMS_eff_tau_idDeepTauVSjet",
-        "e -> tau_h fake rate": "CMS_eff_tau_idDeepTauVSe",
-        "mu -> tau_h fake rate": "CMS_eff_tau_idDeepTauVSmu",
-        "muon_id": "CMS_eff_m_id",
-        "muon_iso": "CMS_eff_m_iso",
-        "muon_reco": "CMS_eff_m_reco",
-        "TES": "CMS_t_energy",
-        "ROCHESTER": "CMS_rochester",
-        "L1Prefiring": "CMS_l1_ecal_prefiring",
-        "QCD_vs_W": "CMS_eff_W_particleNet",
-        "QCD_vs_Top": "CMS_eff_T_particleNet",
-        "fatjet_JES": "CMS_scale_fj",
-        "fatjet_JER": "CMS_res_fj",   
-        "met_trigger_wj": "CMS_eff_MET_trigger",
-        "met_trigger_tt": "CMS_eff_MET_trigger",
-        "met_trigger": "CMS_eff_MET_trigger",
-        "ISR_MLM_2016APV": "CMS_isr",
-        "ISR_MLM_2016": "CMS_isr",
-        "ISR_MLM_2017": "CMS_Z_isr",
-        "ISR_FxFx_2016APV": "CMS_Z_isr",
-        "ISR_FxFx_2016": "CMS_Z_isr",
-        "ISR_FxFx_2017": "CMS_Z_isr",
-        "ISR_FxFx_2018": "CMS_Z_isr",
-        "top_boost_weight_tau_2016APV": "CMS_ttbar_boost",
-        "top_boost_weight_tau_2016": "CMS_ttbar_boost",
-        "top_boost_weight_tau_2017": "CMS_ttbar_boost",
-        "top_boost_weight_tau_2018": "CMS_ttbar_boost",
-        "psweight_ISR": "ps_ISR",
-        "psweight_FSR": "ps_FSR",   
-        "Alpha(PDF)": "Alpha(PDF)",
-        "PDF": "PDF"
+        # Particle shower
+        "psweight_ISR": "ps_isr",
+        "psweight_FSR": "ps_fsr",  
+        # MET unclustered
+        "met_UNCLUSTERED": f"CMS_scale_met_unclustered_energy_{year_map[year]}",
+        # PDFs
+        "Alpha(PDF)": "pdf_alphas",   # 'pdf uncertainties from the variation of alpha_s'
+        "PDF": "pdf_lha",             # Personalizar
+        "PDFandAlpha": "pdf_lha_alphas", # Personalizar
+        # Met trigger
+        "met_trigger": "CMS_eff_MET_trigger",  # Se debe personalizar en el archivo YAML.
+        # Sorpresa
+        "TopPtReweighting": "top_pt_reweighting",
     }
 
 def find_base_name(var_name, rename_dict):
@@ -494,11 +511,19 @@ def save_histograms_to_root(
         "qcd": "QCD"
     }
 
-    rename_dict = rename_map()
+    rename_dict = rename_map(year)
     suffix = f"{region}_{lepton}_{year}"
 
     for sample, variations in histograms_dict.items():
         sample_name = sample_map.get(sample, sample)
+        if sample_name.startswith("Signal"):
+            # Extraer la masa usando split
+            try:
+                mass_str = sample_name.split("_")[1].replace("GeV", "")
+                sample_name = f"M_{mass_str}"
+            except Exception:
+                raise ValueError(f"No se pudo extraer la masa del sample: '{sample_name}'")
+    
         output_name = f"{sample_name}_{suffix}.root"
         output_path = os.path.join(output_dir, output_name)
 
@@ -537,13 +562,13 @@ def save_histograms_to_root(
         # Variaciones "up"
         for var_name, values in variations_up.items():
             base_name = find_base_name(var_name, rename_dict)
-            hist = create_root_histogram(values, bin_edges, f"{base_name}_{suffix}_Up")
+            hist = create_root_histogram(values, bin_edges, f"{base_name}_{suffix}Up")
             hist.Write()
 
         # Variaciones "down"
         for var_name, values in variations_down.items():
             base_name = find_base_name(var_name, rename_dict)
-            hist = create_root_histogram(values, bin_edges, f"{base_name}_{suffix}_Down")
+            hist = create_root_histogram(values, bin_edges, f"{base_name}_{suffix}Down")
             hist.Write()
 
         root_file.Close()
@@ -551,7 +576,7 @@ def save_histograms_to_root(
 
 
 
-def get_variation_event_table(histograms_dict):
+def get_variation_event_table(histograms_dict, year):
     """
     Crea una tabla con una fila por variación (sin Up/Down en el nombre de fila),
     y columnas del tipo: 'tt Down', 'tt', 'tt Up', 'Single Top Down', etc.
@@ -617,22 +642,22 @@ def get_variation_event_table(histograms_dict):
     df = df.fillna(0)
 
     # Renombrar filas (índice) usando rename_map
-    renamer = rename_map()
+    renamer = rename_map(year)
     df = df.rename(index=lambda x: next((v for k, v in renamer.items() if x.startswith(k)), x))
 
 
     return df
 
-def get_binwise_table_for_sample(histograms_dict, binning, sample_key, sample_map=None):
+def get_binwise_table_for_sample(histograms_dict, binning, sample_key, sample_map=None, year = "2017"):
     """
     Versión que:
-    - Hace matching flexible con rename_map() (incluye variaciones con sufijos como _Tight)
+    - Hace matching flexible con rename_map (incluye variaciones con sufijos como _Tight)
     - Mantiene TODAS las sistemáticas
     - Estructura de columnas: Down | Nominal | Up por cada bin
     - Sin valores NaN (usa nominal donde falten variaciones)
     """
 
-    rename_dict = rename_map()
+    rename_dict = rename_map(year)
     bin_ranges = [f"{binning[i]}-{binning[i+1]}" for i in range(len(binning)-1)]
     contents = histograms_dict[sample_key]
     nominal_vals = contents.get("nominal", np.zeros(len(binning)-1))
@@ -707,7 +732,7 @@ def get_binwise_table_for_sample(histograms_dict, binning, sample_key, sample_ma
     
     return df[sorted_columns]
 
-def get_total_relative_deviation_all(histograms_dict, binning):
+def get_total_relative_deviation_all(histograms_dict, binning, year):
     """
     Versión final con:
     - Headers en dos filas (nombres de muestra y variaciones)
@@ -727,7 +752,7 @@ def get_total_relative_deviation_all(histograms_dict, binning):
     }
 
     
-    rename_dict = rename_map()
+    rename_dict = rename_map(year)
     results = defaultdict(dict)
     sample_map = sample_map or {}
 

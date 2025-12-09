@@ -1443,6 +1443,7 @@ class Plotter:
                     pkls = self.pkl_map, norms = self.normalization,  
                     variable = distribution, binning = binning, 
                     bgr = bgr,
+                    year = self.year
                 )
 
             else:
@@ -1613,5 +1614,129 @@ class Plotter:
 
     def get_maps(self):
         return self.pkl_map, self.json_map , self.normalization, self.sumw
-        
-        
+
+
+    # ------------------------------------
+    #   Top tagger stadistic
+    # ------------------------------------
+    def get_top_tagger_stadistics(self, case: str = "top_tagger_raw", combine: bool = False):
+        """
+        Build event yields grouped by background types for the top-tagger selection.
+    
+        Parameters
+        ----------
+        case : str
+            Either 'top_tagger_nevents' or 'top_tagger_raw'.
+            If 'top_tagger_raw', no normalization is applied.
+    
+        Returns
+        -------
+        pd.DataFrame
+            If combine=False: full subcase table.
+            If combine=True: columns {unresolve, partially_resolve, resolve, total}
+        """
+    
+        # List of output groups to be returned
+        map_bgr = [
+            "DrellYan+jets", "SingleTop", "tt", "W+jets", "VV", "QCD", "Higgs", "Data",
+            "SignalTau_1000GeV", "SignalTau_1500GeV", "SignalTau_2000GeV",
+            "SignalTau_3000GeV", "SignalTau_300GeV", "SignalTau_400GeV",
+            "SignalTau_600GeV", "SignalTau_750GeV"
+        ]
+    
+        # Initialize output structure
+        group_map = {name: {} for name in map_bgr}
+    
+        # --------------------------------------------------
+        # Helper: safely accumulate values
+        # --------------------------------------------------
+        def safe_add(target_dict, key, value):
+            """Add numeric values into a dict, avoiding type collisions."""
+            if not isinstance(value, (int, float)):
+                return
+            target_dict[key] = float(value) + float(target_dict.get(key, 0))
+    
+        # --------------------------------------------------
+        # First pass: compute weighted event counts
+        # --------------------------------------------------
+        map_per_bgr = {}
+    
+        for sample in self.json_map:
+            map_per_bgr[sample] = {}
+    
+            for subcase, raw_value in self.json_map[sample][case].items():
+    
+                if not isinstance(raw_value, (int, float)):
+                    continue
+    
+                # Weight MC if needed
+                events_weighted = (
+                    raw_value * self.normalization[sample]
+                    if case != "top_tagger_raw" else raw_value
+                )
+    
+                map_per_bgr[sample][subcase] = events_weighted
+    
+        # --------------------------------------------------
+        # Second pass: assign sample to background group
+        # --------------------------------------------------
+        for sample, values in map_per_bgr.items():
+    
+            if sample.startswith("DYJets"):
+                target = "DrellYan+jets"
+            elif sample.startswith("TTTo"):
+                target = "tt"
+            elif sample in ["WW", "WZ", "ZZ"]:
+                target = "VV"
+            elif sample.startswith("ST"):
+                target = "SingleTop"
+            elif sample.startswith("WJetsToLNu"):
+                target = "W+jets"
+            elif sample.startswith("QCD"):
+                target = "QCD"
+            elif sample in ["GluGluHToWWToLNuQQ", "VBFHToWWTo2L2Nu", "VBFHToWWToLNuQQ"]:
+                target = "Higgs"
+            elif sample in ["MET", "SingleMuon", "SingleElectron", "Tau"]:
+                target = "Data"
+            elif sample in map_bgr:   # SignalTau_* samples
+                target = sample
+            else:
+                continue
+    
+            for subcase, value in values.items():
+                safe_add(group_map[target], subcase, value)
+    
+        # --------------------------------------------------
+        # Build DataFrame
+        # --------------------------------------------------
+        df = pd.DataFrame.from_dict(group_map, orient="index").fillna(0)
+    
+        # --------------------------------------------------
+        # Combine categories if requested
+        # --------------------------------------------------
+        if combine:
+    
+            df_combined = pd.DataFrame(index=df.index)
+    
+            df_combined["unresolve"] = df.filter(regex="unresolve").sum(axis=1)
+            df_combined["partially_resolve"] = df.filter(regex="partially_resolve").sum(axis=1)
+    
+            # resolve = resolve - partially_resolve - unresolve
+            df_combined["resolve"] = (
+                df.filter(regex="resolve")
+                .drop(df.filter(regex="partially_resolve").columns, axis=1)
+                .drop(df.filter(regex="unresolve").columns, axis=1)
+                .sum(axis=1)
+            )
+    
+            # Add total column
+            df_combined["total"] = df_combined.sum(axis=1)
+    
+            return df_combined
+    
+        # --------------------------------------------------
+        # If combine = False: add total column to full table
+        # --------------------------------------------------
+        df["total"] = df.sum(axis=1)
+    
+        return df

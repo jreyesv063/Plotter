@@ -196,3 +196,54 @@ def get_rename_map(groups):
         data_sources = ', '.join(groups['data'])
         rename_columns['data'] = f"Data ({data_sources})"
     return rename_columns
+
+
+# =============================================
+# New functions for calculating limits
+# =============================================
+
+def get_histogram_safe(root_file, hist_name):
+    """Recupera un histograma de forma segura."""
+    if not root_file or root_file.IsZombie():
+        return None
+    h = root_file.Get(hist_name)
+    if not h or not h.InheritsFrom("TH1"):
+        return None
+    hist = h.Clone()
+    hist.SetDirectory(0)
+    return hist
+
+
+def safe_integral(hist):
+    """Calcula integral de histograma de forma segura."""
+    if hist:
+        try:
+            return hist.Integral()
+        except:
+            return 0.0
+    return 0.0
+
+def format_line(syst_name, syst_type, values, max_syst_width, max_val_width, precision=0):
+    """Formatea una línea de sistemática."""
+    if precision > 0:
+        n_decimals = max(0, int(round(-math.log10(precision))))
+    else:
+        n_decimals = 3
+
+    line = f"{syst_name.ljust(max_syst_width)}  {syst_type.ljust(6)}"
+
+    for val in values:
+        if val != "-" and val != "":
+            val_float = float(val)
+
+            # Si es entero, imprimir sin decimales
+            if val_float.is_integer():
+                val_str = str(int(val_float))
+            else:
+                val_str = f"{val_float:.{n_decimals}f}"
+        else:
+            val_str = val
+
+        line += f" {val_str.rjust(max_val_width)}"
+
+    return line
