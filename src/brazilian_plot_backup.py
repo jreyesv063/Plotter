@@ -33,7 +33,7 @@ class BrazilianPlot:
             1000: 0.646,
             1500: 0.0891,
             2000: 0.0182,
-            3000: 0.0134
+            3000: 0.00134
         }
         
         # ================================
@@ -355,6 +355,5 @@ class BrazilianPlot:
         
 
 if __name__ == "__main__":  
-    plot = BrazilianPlot(year="2016postVFP", binS= "All", channel="tau")
+    plot = BrazilianPlot(year="2016preVFP", binS= "All", channel="tau")
     plot.main(runBlinded = True, grid=False)
-

@@ -454,127 +454,31 @@ class Plotter:
         )
 
 
-        
-        # :::::::::::::::::::::::::::::::::::::::
-        # Create table report
-        # :::::::::::::::::::::::::::::::::::::::
-        rows = []
-        for bgr in grouped_histos:           
-            events = np.sum(grouped_histos[bgr])
-
-            stat = np.nan
-            syst_up = np.nan
-            syst_down = np.nan
-            if bgr != "data":
-                stat = np.linalg.norm(grouped_histos_stat_error[bgr])
-                syst_up = np.linalg.norm(grouped_histos_syst_error[bgr]['Up'])
-                syst_down = np.linalg.norm(grouped_histos_syst_error[bgr]['Down'])
-            
-            row_data = {
-                "Process": bgr,
-                "Events": events,
-                "Stat": stat,
-                "Syst Up": syst_up,
-                "Syst Down": syst_down
-            }
-            rows.append(row_data)
-
-        self.df_table_report = pd.DataFrame(rows)
-
-
-
-        # :::::::::::::::::::::::::::::::::::::::
-        # Apply SFs
-        # :::::::::::::::::::::::::::::::::::::::
+        # Scale mc contribution
         for bgr in grouped_histos:
-            if bgr != "data" and not bgr.startswith("Signal"):
-                grouped_histos[bgr] = SF[bgr] * grouped_histos[bgr]
-
-
-        
-        # :::::::::::::::::::::::::::::::::::::::
-        # Create binning information
-        # :::::::::::::::::::::::::::::::::::::::
-        bin_names = [f"[{edges[i]}, {edges[i+1]}]" for i in range(len(edges) - 1)]
-        n_bins = len(bin_names)
-        
-        bgr_names = [b for b in grouped_histos if b != "data" and not b.startswith("Signal")]
-        
-        total_bgr_val = np.zeros(n_bins)
-        total_bgr_stat2 = np.zeros(n_bins)
-        total_bgr_up2 = np.zeros(n_bins)
-        total_bgr_down2 = np.zeros(n_bins)
-        
-        for bgr in bgr_names:
-            v = np.atleast_1d(grouped_histos[bgr])
-            total_bgr_val += v
-            
-            s = np.atleast_1d(grouped_histos_stat_error.get(bgr, np.zeros(n_bins)))
-            total_bgr_stat2 += s**2
-            
-            syst = grouped_histos_syst_error.get(bgr, {})
-            if isinstance(syst, dict):
-                u = np.atleast_1d(syst.get('Up', np.zeros(n_bins)))
-                d = np.atleast_1d(syst.get('Down', np.zeros(n_bins)))
-                total_bgr_up2 += u**2
-                total_bgr_down2 += d**2
-        
-        def format_cell(v, s, u, d, is_data=False):
-            if is_data:
-                return f"{v:.2f}"
-            return f"{v:.2f} ± {s:.2f} +{u:.2f}/-{d:.2f}"
-        
-        rows_list = []
-        all_keys = list(grouped_histos.keys())
-        processes_to_show = all_keys + ["Total bgr"]
-        
-        for proc in processes_to_show:
-            is_data = (proc == "data")
-            
-            if proc == "Total bgr":
-                v_arr, s_arr = total_bgr_val, np.sqrt(total_bgr_stat2)
-                u_arr, d_arr = np.sqrt(total_bgr_up2), np.sqrt(total_bgr_down2)
-            else:
-                v_arr = np.atleast_1d(grouped_histos[proc])
-                # Manejo de None para stat y syst (especialmente para 'data')
-                s_raw = grouped_histos_stat_error.get(proc)
-                s_arr = np.atleast_1d(s_raw) if s_raw is not None else np.zeros(n_bins)
+            if bgr != "data":
+                print(
+                    f"Background: {bgr:10s} | "
+                    f"binning: {grouped_histos[bgr]}"
+                    f"Events: {np.sum(grouped_histos[bgr]):8.2f} | "
+                    f"Stat: {np.linalg.norm(grouped_histos_stat_error[bgr]):8.2f} | "
+                    f"Syst Up: {np.linalg.norm(grouped_histos_syst_error[bgr]['Up']):8.2f} | "
+                    f"Syst Down: {np.linalg.norm(grouped_histos_syst_error[bgr]['Down']):8.2f}"
+                )
+                if not bgr.startswith("Signal"):
+                    grouped_histos[bgr] = SF[bgr] * grouped_histos[bgr]
                 
-                syst = grouped_histos_syst_error.get(proc, {})
-                if isinstance(syst, dict):
-                    u_raw = syst.get('Up')
-                    d_raw = syst.get('Down')
-                    u_arr = np.atleast_1d(u_raw) if u_raw is not None else np.zeros(n_bins)
-                    d_arr = np.atleast_1d(d_raw) if d_raw is not None else np.zeros(n_bins)
-                else:
-                    u_arr, d_arr = np.zeros(n_bins), np.zeros(n_bins)
-        
-            row_dict = {"Process": proc}
-            
-            t_v = np.sum(v_arr)
-            t_s = np.linalg.norm(s_arr) 
-            t_u = np.linalg.norm(u_arr)
-            t_d = np.linalg.norm(d_arr)
-            row_dict["Total Events"] = format_cell(t_v, t_s, t_u, t_d, is_data)
-            
-            # Llenado de cada bin
-            for i in range(n_bins):
-                row_dict[bin_names[i]] = format_cell(v_arr[i], s_arr[i], u_arr[i], d_arr[i], is_data)
-            
-            rows_list.append(row_dict)
-        
-        # 5. Generación del DataFrame final
-        self.df_bins_report = pd.DataFrame(rows_list)
-        
-        # Reordenar columnas para que 'Total Events' sea la segunda columna
-        cols = ["Process", "Total Events"] + bin_names
-        self.df_bins_report = self.df_bins_report[cols]
+            else:
+                print(
+                    f"Background: {bgr:10s} | "
+                    f"Events: {np.sum(grouped_histos[bgr]):8.2f} | "
+                )
+
+            print("\t\t")
+ 
         
 
-
-        # :::::::::::::::::::::::::::::::::
-        #  Create plot
-        # :::::::::::::::::::::::::::::::::        
+        
         hist_plotter.plot(
             # Histograms
             distribution = distribution,
@@ -599,38 +503,7 @@ class Plotter:
             
         )
 
-        return grouped_histos
-
-
-    def get_table_report(self):
-        # adding total_bgr 
-        df_bgr = self.df_table_report[
-            (self.df_table_report["Process"] != "data") & 
-            (~self.df_table_report["Process"].str.startswith("Signal"))
-        ]
-        total_events = df_bgr["Events"].sum()
-
-        total_stat = np.sqrt(np.sum(df_bgr["Stat"]**2))
-        total_syst_up = np.sqrt(np.sum(df_bgr["Syst Up"]**2))
-        total_syst_down = np.sqrt(np.sum(df_bgr["Syst Down"]**2))
-
-        # New row
-        total_row = pd.DataFrame([{
-            "Process": "Total bgr",
-            "Events": total_events,
-            "Stat": total_stat,
-            "Syst Up": total_syst_up,
-            "Syst Down": total_syst_down
-        }])
-
-        self.df_table_report = pd.concat([self.df_table_report, total_row], ignore_index=True)
-
-        return self.df_table_report
-
-
-    def get_binning_report(self):
-        return self.df_bins_report.round(2)
-        
+        return grouped_histos, grouped_histos_stat_error #, grouped_histos_syst_error
     
     def get_2D_histograms(self, bgr, ST_bins, nj_bins):
         hist_2D = {}
@@ -638,67 +511,39 @@ class Plotter:
             hist_2D[sample] = {}
             edges_nj = self.hist[sample]['hist']['main']['ttbar_boost_weight']['nj_edges']/self.hist[sample]['hist']['main']['ttbar_boost_weight']['nj_edges'][1]
             edges_ST = self.hist[sample]['hist']['main']['ttbar_boost_weight']['ST_edges']/self.hist[sample]['hist']['main']['ttbar_boost_weight']['nj_edges'][1]
-
-            # --------------------------------------
-            # Stadistical error and central value
-            # ---------------------------------------
-            numerator = self.hist[sample]['hist']['main']['ttbar_boost_weight']['hist']
             
-            if sample != "MET":
-                denominator = self.sumw[sample]
-                eff_2D = np.abs(numerator / denominator)
-    
-                hist_2D[sample]["stat_error"] = np.sqrt(eff_2D * (1 - eff_2D) / denominator) * self.lumi * self.xsec[sample]
-
-                hist_2D[sample]["sumw"] = (numerator/denominator) * self.lumi * self.xsec[sample]
-
-            else:
-                hist_2D[sample]["sumw"] = numerator
+            hist_2D[sample]["sumw"] = self.hist[sample]['hist']['main']['ttbar_boost_weight']['hist'] * self.normalization[sample]
                 
-
-        # 1. Obtenemos el shape de cualquier muestra para inicializar el total
-        any_sample = list(hist_2D.keys())[0]
-        shape = hist_2D[any_sample]["sumw"].shape
-        
-        # 2. Inicializamos los diccionarios y la entrada "total"
+                
+               
         grouped_histos = {}
-        grouped_errors = {}
-        
-        grouped_histos["total"] = np.zeros(shape)
-        grouped_errors["total"] = np.zeros(shape)
-        
+        grouped_histos["total"] = 0  
+
+
         for group, samples in self.grouped_samples.items():
-            grouped_histos[group] = np.zeros(shape)
-            grouped_errors[group] = np.zeros(shape)
+            grouped_histos[group] = 0
             
             for sample in samples:
                 grouped_histos[group] += hist_2D[sample]["sumw"]
                 
                 if sample not in self.DATA:
-                    grouped_errors[group] += hist_2D[sample]["stat_error"]**2
-                    grouped_histos["total"] += hist_2D[sample]["sumw"]
-                    grouped_errors["total"] += hist_2D[sample]["stat_error"]**2
+                    grouped_histos["total"] += hist_2D[sample]["sumw"]    
+
         
-            # Raíz cuadrada para el grupo
-            grouped_errors[group] = np.sqrt(grouped_errors[group])
-
-        # 3. Raíz cuadrada para el total (fuera de todos los bucles)
-        grouped_errors["total"] = np.sqrt(grouped_errors["total"])
-
-   
-        def rebin2d_with_flow(H, E, old_x, old_y, new_x, new_y):
+        def rebin2d_with_flow(H, old_x, old_y, new_x, new_y):
             """
-            H: Matriz de contenidos (sumw)
-            E: Matriz de errores (stat_error)
+            Rebin 2D histogram conserving counts.
+            Underflow → first bin
+            Overflow → last bin
             """
+        
             Hnew = np.zeros((len(new_x)-1, len(new_y)-1))
-            Enew = np.zeros((len(new_x)-1, len(new_y)-1)) # Matriz para la suma en cuadratura
         
             for i in range(len(old_x)-1):
                 for j in range(len(old_y)-1):
+        
                     content = H[i, j]
-                    error = E[i, j]
-                    if content == 0 and error == 0:
+                    if content == 0:
                         continue
         
                     cx = 0.5 * (old_x[i] + old_x[i+1])
@@ -707,39 +552,40 @@ class Plotter:
                     ix = np.searchsorted(new_x, cx) - 1
                     iy = np.searchsorted(new_y, cy) - 1
         
-                    # Underflow/Overflow logic
-                    ix = max(0, min(ix, Hnew.shape[0] - 1))
-                    iy = max(0, min(iy, Hnew.shape[1] - 1))
+                    # underflow
+                    if ix < 0:
+                        ix = 0
+                    if iy < 0:
+                        iy = 0
+        
+                    # overflow
+                    if ix >= Hnew.shape[0]:
+                        ix = Hnew.shape[0] - 1
+                    if iy >= Hnew.shape[1]:
+                        iy = Hnew.shape[1] - 1
         
                     Hnew[ix, iy] += content
-                    Enew[ix, iy] += error**2 
         
-            return Hnew, np.sqrt(Enew) 
+            return Hnew
 
-        def histogram2d_to_table(H, E, xbins, ybins):
+        def histogram2d_to_table(H, xbins, ybins):
             rows = []
-               
+        
             for i in range(len(xbins) - 1):
                 for j in range(len(ybins) - 1):
-                    if bgr == "data":
-                        error_i_j = np.sqrt(H[i,j])
-                    else:
-                        error_i_j = E[i, j]
-                        
+        
                     rows.append({
                         "ST_min": xbins[i],
                         "ST_max": xbins[i+1],
                         "nj_min": ybins[j],
                         "nj_max": ybins[j+1],
-                        "events": H[i, j],
-                        "error": error_i_j
+                        "events": H[i, j]
                     })
-            return pd.DataFrame(rows)
         
-            
-        H_rebinned, E_rebinned = rebin2d_with_flow(
+            return pd.DataFrame(rows)
+    
+        H_rebinned = rebin2d_with_flow(
             grouped_histos[bgr],
-            grouped_errors[bgr],
             edges_ST,
             edges_nj,
             ST_bins,
@@ -748,7 +594,6 @@ class Plotter:
 
         table = histogram2d_to_table(
             H_rebinned,
-            E_rebinned,
             ST_bins,
             nj_bins
         )

@@ -146,26 +146,26 @@ class Limits:
             [f"CMS_fake_t_DeepTau2017v2p1_VSe_{bgr_case}_{self.channel}_{self.year}", "shape"], #
             [f"CMS_fake_t_DeepTau2017v2p1_VSjet_{bgr_case}_{self.channel}_{self.year}", "shape"], #   
             [f"CMS_fake_t_DeepTau2017v2p1_VSmu_{bgr_case}_{self.channel}_{self.year}", "shape"],  #
-            #[f"CMS_scale_t_{bgr_case}_{self.channel}_{self.year}", "shape"],  #
+            [f"CMS_scale_t_{bgr_case}_{self.channel}_{self.year}", "shape"],  #
             # Muons
             [f"CMS_eff_m_id_syst_{bgr_case}_{self.channel}_{self.year}", "shape"], #
             [f"CMS_eff_m_iso_syst_{bgr_case}_{self.channel}_{self.year}", "shape"], #
             [f"CMS_eff_m_reco_syst_{bgr_case}_{self.channel}_{self.year}", "shape"], #
-            #[f"CMS_scale_m_{bgr_case}_{self.channel}_{self.year}", "shape"],#
+            [f"CMS_scale_m_{bgr_case}_{self.channel}_{self.year}", "shape"],#
             # Electrons
             [f"CMS_eff_e_id_13TeV_{bgr_case}_{self.channel}_{self.year}", "shape"],  #
             [f"CMS_eff_e_reco_Above20_13TeV_{bgr_case}_{self.channel}_{self.year}", "shape"], #
             [f"CMS_eff_e_reco_Below20_13TeV_{bgr_case}_{self.channel}_{self.year}", "shape"], #
             # Jets
-            #[f"CMS_scale_j_{bgr_case}_{self.channel}_{self.year}", "shape"], #
-            #[f"CMS_res_j_{bgr_case}_{self.channel}_{self.year}", "shape"],   #
+            [f"CMS_scale_j_{bgr_case}_{self.channel}_{self.year}", "shape"], #
+            [f"CMS_res_j_{bgr_case}_{self.channel}_{self.year}", "shape"],   #
             # Bjets
             [f"CMS_btag_heavy_{bgr_case}_{self.channel}_{self.year}", "shape"],  #
             [f"CMS_btag_light_{bgr_case}_{self.channel}_{self.year}", "shape"], #
             [f"CMS_eff_j_PUJetID_eff_{bgr_case}_{self.channel}_{self.year}", "shape"], #
             # Fatjets
-            #[f"CMS_scale_fj_{bgr_case}_{self.channel}_{self.year}", "shape"], #
-            #[f"CMS_res_fj_{bgr_case}_{self.channel}_{self.year}", "shape"],   #
+            [f"CMS_scale_fj_{bgr_case}_{self.channel}_{self.year}", "shape"], #
+            [f"CMS_res_fj_{bgr_case}_{self.channel}_{self.year}", "shape"],   #
             [f"CMS_eff_j_ParticleNet_W_Nominal_{bgr_case}_{self.channel}_{self.year}", "shape"], #
             [f"CMS_eff_j_ParticleNet_Top_Nominal_{bgr_case}_{self.channel}_{self.year}", "shape"], #
             # Pileup

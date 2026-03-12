@@ -1,169 +1,114 @@
 import ROOT
-import math
-import pandas as pd
-from scipy.stats import beta
-from scipy.stats import poisson
+import numpy as np
+import awkward as ak
 
 
 
-def calc_bayes_eff_error(numerator: float, denominator: float) -> float:
-    """
-    Compute Bayesian efficiency uncertainty using ROOT's TGraphAsymmErrors::BayesDivide.
-    This exactly replicates the ROOT behavior.
-    """
+def calc_bayes_eff_error_scalar(numerator, denominator):
+    """Versión escalar (ROOT solo funciona así)"""
     if denominator == 0:
         return 0.0
-
-    # Create numerator and denominator histograms
+    
     h_num = ROOT.TH1F("h_num", "", 1, 0, 1)
     h_den = ROOT.TH1F("h_den", "", 1, 0, 1)
 
-    h_num.SetBinContent(1, numerator)
-    h_den.SetBinContent(1, denominator)
-    h_num.Sumw2()
-    h_den.Sumw2()
+    h_num.SetBinContent(1, np.abs(numerator))
+    h_den.SetBinContent(1, np.abs(denominator))
 
-    # Create graph and compute Bayesian efficiency
     g = ROOT.TGraphAsymmErrors()
     g.BayesDivide(h_num, h_den, "b")
 
-    # Extract asymmetric errors
     err_low = g.GetErrorYlow(0)
     err_high = g.GetErrorYhigh(0)
 
     efficiency = numerator / denominator
 
-    # Follow same logic as your C++ ROOT function
     if err_high > err_low:
-        err = err_high
-        if err > efficiency:
-            err = err_low
+        err = err_high if err_high <= efficiency else err_low
     else:
         err = err_low
 
-    # Clean up (optional in notebooks, but good practice)
-    del h_num
-    del h_den
-    del g
-
+    del h_num, h_den, g
     return err
 
 
-def calc_bin_eff_error(numerator: float, denominator: float) -> float:
-    if denominator > 0:
-        efficiency = abs(numerator / denominator)
-        efferror = math.sqrt(efficiency * (1.0 - efficiency) / denominator)
-        return efferror
-    else:
-        return 0.0
+def calc_bayes_eff_error(numerator, denominator):
+
+    errors = np.zeros_like(numerator)
+
+    for i, n in enumerate(numerator):
+        errors[i] = calc_bayes_eff_error_scalar(float(n), float(denominator))
+
+    return errors
 
 
 
-def get_table_cutflow_unscaled(json_map, table = "cutflow"):
-    pd.set_option('display.float_format', '{:.2f}'.format)
+def compute_statistical_error(numerator, denominator):
+    
+    efficiency = np.abs(numerator / denominator)
 
-    cutflow_unscaled = {}
+    # binomial error por defecto
+    errors = np.sqrt((efficiency * (1 - efficiency)) / denominator)
 
-    # Obtener cortes base desde el primer dataset que tenga "cutflow"
-    try:
-        base_cuts = next(
-            list(json_map[ds][table].keys()) for ds in json_map if table in json_map[ds]
-        )
-    except StopIteration:
-        raise ValueError(f"❌ Ningún dataset contiene la clave {table}")
+    # regiones donde usar Bayes
+    bayes_mask = (
+        (efficiency < 1e-7) 
+    )
+    
+    bayes_errors = calc_bayes_eff_error(numerator, denominator)
 
-    for dataset in json_map:
-        cutflow_nominal = json_map[dataset].get(table, {})
-        unscaled = {}
-        for cut in base_cuts:
-            value = cutflow_nominal.get(cut)
+    errors = ak.where(
+        bayes_mask,
+        bayes_errors,
+        errors
+    )
 
-            if value is not None:
-                try:
-                    unscaled[cut] = float(value)
-                except (ValueError, TypeError):
-                    unscaled[cut] = None
-            else:
-                #print(f"⚠️  Campo '{cut}' no encontrado en dataset '{dataset}'")
-                unscaled[cut] = None
-
-        cutflow_unscaled[dataset] = unscaled
-
-    df = pd.DataFrame.from_dict(cutflow_unscaled, orient="index").transpose()
-    return df.round(2)
-
-def compute_eff_cutflow(cutflow_table, normalization):
-    result_map = {}
-    ratio_data = {}
-    scaled_errors = {}
-    sumw_row = cutflow_table.loc['sumw']
-
-    for cut in cutflow_table.index:
-        result_map[cut] = {}
-        ratio_data[cut] = {}
-        scaled_errors[cut] = {}
-
-        for sample in cutflow_table.columns:
-            numerator = cutflow_table.at[cut, sample]
-            denominator = sumw_row[sample]
-            norm_factor = normalization.get(sample, 1.0)
-
-            try:
-                if cut == 'sumw':
-                    ratio = 1.0
-                    error = None
-                else:
-                    ratio = float(numerator) / float(denominator) if denominator else None
-                    error = compute_statistical_error(numerator, denominator) if denominator else None
-                    #print(f" Sample: {sample} ;  Cut: {cut};  Numerator {numerator}; Denominator {denominator};  Error {error}")
-            except (ZeroDivisionError, TypeError, ValueError):
-                ratio = None
-                error = None
+    
+    return errors
 
 
-            ratio_data[cut][sample] = ratio
+def compute_systematic_error(histos, list_syst_var, distribution, cut):
+    sumw_nominal = histos["nominal"]['sumw_all_weights']
+    nominal = histos["nominal"][distribution][cut]['sumw']
+    eff_nominal = nominal/sumw_nominal
+        
+    delta_up = {}
+    for up_var in list_syst_var['Up']:              
+        last_level = histos[up_var]['hist'][distribution]
+        sumw_up = histos[up_var]['sumw_all_weights']
+        
+        if np.isnan(sumw_up):
+            sumw_up = sumw_nominal
+            
+        name_cut = next(k for k in last_level if k.startswith(cut))        
+        eff_up = last_level[name_cut]['sumw']/sumw_up   
 
-            if error is not None and denominator is not None:
-                scaled_error = error * norm_factor * denominator
-            else:
-                scaled_error = None if cut == 'sumw' else None
+        delta_up[up_var] = eff_up - eff_nominal
 
-            scaled_errors[cut][sample] = scaled_error
-
-            result_map[cut][sample] = {
-                'numerator': float(numerator),
-                'denominator': float(denominator),
-                'ratio': ratio,
-                'error_eff': error,
-                'normalization': norm_factor * denominator,
-                'scaled_errors': scaled_error
-            }
-
-
-    # Crear DataFrames y respetar el orden original
-    ratio_df = pd.DataFrame.from_dict(ratio_data, orient="index", columns=cutflow_table.columns)
-    scaled_error_df = pd.DataFrame.from_dict(scaled_errors, orient="index", columns=cutflow_table.columns)
-
-    ratio_df = ratio_df.reindex(index=cutflow_table.index)
-    scaled_error_df = scaled_error_df.reindex(index=cutflow_table.index)
-
-    return result_map, scaled_error_df
+   
+    total_syst_up = np.sqrt(
+        np.sum(np.array(list(delta_up.values()))**2, axis=0)
+    ) 
 
 
+    delta_down = {}
+    for down_var in list_syst_var['Down']:      
+        last_level = histos[down_var]['hist'][distribution]
+        sumw_down = histos[down_var]['sumw_all_weights']
 
-def compute_statistical_error(numerator: float, denominator: float) -> float:
-    """
-    Compute the statistical uncertainty using standard binomial error,
-    but switch to Bayesian error if efficiency is too close to 0 or 1.
-    """
-    if denominator <= 0:
-        return 0.0
+        if np.isnan(sumw_down):
+            sumw_down = sumw_nominal
+            
+        name_cut = next(k for k in last_level if k.startswith(cut))        
+        
+        eff_down = last_level[name_cut]['sumw']/sumw_down
 
-    efficiency = numerator / denominator
-    eff_err = calc_bin_eff_error(numerator, denominator)
+        delta_down[down_var] = eff_down - eff_nominal
 
-    # Usar Bayes si eficiencia es cercana a 0 o 1
-    if efficiency < 0.00001 or efficiency > 0.99999:
-        eff_err = calc_bayes_eff_error(numerator, denominator)
+    total_syst_down = np.sqrt(
+        np.sum(np.array(list(delta_down.values()))**2, axis=0)
+    ) 
 
-    return eff_err
+    return total_syst_up, total_syst_down
+
+
